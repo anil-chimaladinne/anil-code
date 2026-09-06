@@ -243,7 +243,7 @@ export default function NotepadRoomPage() {
               AM
             </div>
             <span className="font-bold tracking-tight text-sm">
-              anil<span className="text-orange-500">6</span>
+              Anil<span className="text-orange-500">6</span>
             </span>
           </a>
 

@@ -8,11 +8,11 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "anil6 — Real-Time Code Sharing & Notepad",
+  title: "Anil6 — Real-Time Code Sharing & Notepad",
   description:
     "Instant, real-time code sharing and collaborative notepad. Share code and collaborate with peers live.",
   keywords: [
-    "anil6",
+    "Anil6",
     "code sharing",
     "real-time notepad",
     "codeshare",
