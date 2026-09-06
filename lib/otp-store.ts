@@ -169,12 +169,26 @@ export async function sendVerificationCode(
         });
 
         const resData = await res.json();
+        console.log("[OTP Service] Fast2SMS response:", resData);
         if (res.ok && (resData.return === true || resData.status_code === 200)) {
           return {
             success: true,
             delivered: true,
             method: "fast2sms",
             message: `SMS dispatched to ${cleanTarget}! Check your mobile messages.`,
+          };
+        } else {
+          const detail = resData.message
+            ? Array.isArray(resData.message)
+              ? resData.message.join(", ")
+              : String(resData.message)
+            : "Fast2SMS delivery failed";
+          return {
+            success: true,
+            delivered: false,
+            method: "demo_preview",
+            previewCode: code,
+            message: `Fast2SMS notice: ${detail}. Use code below.`,
           };
         }
       } catch (smsErr: any) {
