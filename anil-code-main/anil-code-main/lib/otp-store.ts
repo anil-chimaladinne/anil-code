@@ -161,7 +161,65 @@ export async function sendVerificationCode(
     }
   }
 
-  // 2. SECONDARY: RESEND API
+  // 2. BREVO (Sendinblue) API - 100% Free 300 emails/day to ANY recipient, no domain needed!
+  const brevoApiKey = process.env.BREVO_API_KEY?.trim();
+  if (brevoApiKey && brevoApiKey.length > 0) {
+    try {
+      const senderEmail = process.env.BREVO_SENDER_EMAIL?.trim() || "chimaladinneanil6@gmail.com";
+      const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+        method: "POST",
+        headers: {
+          "api-key": brevoApiKey,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          sender: { name: "AM Code", email: senderEmail },
+          to: [{ email: cleanTarget }],
+          subject: `Your AM Code Verification: ${code}`,
+          htmlContent: `
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 32px 20px; background: #0f0f12; color: #f3f4f6; border-radius: 16px; max-width: 480px; margin: 0 auto; border: 1px solid #27272a;">
+              <div style="text-align: center; margin-bottom: 24px;">
+                <div style="display: inline-block; background: linear-gradient(135deg, #ea580c, #f59e0b); color: #ffffff; font-weight: 900; font-size: 22px; padding: 10px 20px; border-radius: 12px; letter-spacing: 2px;">
+                  AM
+                </div>
+                <h2 style="color: #ffffff; font-size: 20px; font-weight: 800; margin-top: 16px; margin-bottom: 4px;">Verification Code</h2>
+                <p style="color: #9ca3af; font-size: 13px; margin: 0;">Multiplayer Code & Notes Workspace</p>
+              </div>
+
+              <div style="background: #18181b; border: 1px solid #27272a; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px;">
+                <p style="font-size: 13px; color: #a1a1aa; margin: 0 0 12px 0;">Your one-time 6-digit verification code is:</p>
+                <div style="font-family: 'Courier New', monospace; font-size: 36px; font-weight: 800; letter-spacing: 8px; color: #fb923c; background: #27272a; padding: 14px 20px; border-radius: 8px; display: inline-block;">
+                  ${code}
+                </div>
+                <p style="font-size: 12px; color: #71717a; margin: 12px 0 0 0;">Valid for 10 minutes for room /${roomId || "6"}</p>
+              </div>
+
+              <p style="font-size: 12px; color: #71717a; text-align: center; line-height: 1.5; margin: 0;">
+                If you did not request this verification code, you can safely ignore this email.
+              </p>
+            </div>
+          `,
+        }),
+      });
+
+      const resData = await res.json();
+      if (res.ok && (resData.messageId || resData.id)) {
+        return {
+          success: true,
+          delivered: true,
+          method: "brevo",
+          message: `Verification code sent to ${cleanTarget} via Brevo! Check your inbox or spam.`,
+        };
+      } else {
+        console.warn("[OTP Service] Brevo dispatch warning:", resData);
+      }
+    } catch (err: any) {
+      console.error("[OTP Service] Brevo dispatch error:", err.message);
+    }
+  }
+
+  // 3. TERTIARY: RESEND API
   const resendApiKey = process.env.RESEND_API_KEY;
   if (resendApiKey && resendApiKey.trim().length > 0) {
     try {
@@ -229,7 +287,7 @@ export async function sendVerificationCode(
     success: false,
     delivered: false,
     method: "smtp",
-    error: "Failed to send email verification code. Please make sure GMAIL_USER and GMAIL_APP_PASSWORD are configured in .env.local",
+    error: "Failed to send email verification code. Please configure Gmail SMTP or Brevo API in .env.local",
     message: "Email sending failed.",
   };
 }
