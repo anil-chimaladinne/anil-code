@@ -16,8 +16,15 @@ export async function POST(req: NextRequest) {
     const cleanTarget = target.trim().toLowerCase();
     const { code, expiresAt } = generateOtp(cleanTarget);
 
-    // Dispatch OTP via configured email/SMS service or return fallback preview
+    // Dispatch OTP via configured email/SMS service
     const sendResult = await sendVerificationCode(cleanTarget, code, roomId || "6");
+
+    if (!sendResult.success) {
+      return NextResponse.json(
+        { error: sendResult.error || "Failed to dispatch verification code. Please check your address or mobile number." },
+        { status: 400 }
+      );
+    }
 
     return NextResponse.json({
       success: true,
@@ -26,7 +33,6 @@ export async function POST(req: NextRequest) {
       delivered: sendResult.delivered,
       method: sendResult.method,
       message: sendResult.message,
-      previewCode: sendResult.previewCode, // Sent when in dev/demo fallback mode
     });
   } catch (err: any) {
     return NextResponse.json(

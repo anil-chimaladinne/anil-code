@@ -184,11 +184,11 @@ export async function sendVerificationCode(
               : String(resData.message)
             : "Fast2SMS delivery failed";
           return {
-            success: true,
+            success: false,
             delivered: false,
-            method: "demo_preview",
-            previewCode: code,
-            message: `Fast2SMS notice: ${detail}. Use code below.`,
+            method: "fast2sms",
+            error: `SMS Gateway Error: ${detail}`,
+            message: `SMS could not be delivered: ${detail}`,
           };
         }
       } catch (smsErr: any) {
@@ -237,27 +237,34 @@ export async function sendVerificationCode(
         } else {
           const detail = resData.message || "Twilio delivery failed";
           return {
-            success: true,
+            success: false,
             delivered: false,
-            method: "demo_preview",
-            previewCode: code,
-            message: `Twilio notice: ${detail}. Use code below.`,
+            method: "twilio",
+            error: `Twilio Error: ${detail}`,
+            message: `Twilio Error: ${detail}`,
           };
         }
       } catch (twilioErr: any) {
         console.error("Twilio error:", twilioErr.message);
       }
     }
+
+    // If no SMS provider succeeded
+    return {
+      success: false,
+      delivered: false,
+      method: "fast2sms",
+      error: "No SMS gateway configured or delivery failed. Please try Gmail verification.",
+      message: "No active SMS provider configured.",
+    };
   }
 
-  // 3. DEV / DEMO FALLBACK
+  // Fallback for email
   return {
-    success: true,
+    success: false,
     delivered: false,
-    method: "demo_preview",
-    previewCode: code,
-    message: isEmail
-      ? `No Resend API Key configured in .env.local. Use the preview code below.`
-      : `No SMS gateway configured in .env.local. Use the preview code below.`,
+    method: "resend",
+    error: "Failed to send email verification code. Please check your Gmail address.",
+    message: "Email sending failed.",
   };
 }
