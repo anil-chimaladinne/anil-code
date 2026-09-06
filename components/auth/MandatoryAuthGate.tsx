@@ -243,17 +243,15 @@ export function MandatoryAuthGate({ roomId, onAuthenticate }: MandatoryAuthGateP
         ) : (
           /* STEP 2: Enter 6-digit Verification Code */
           <form onSubmit={handleVerifyCode} className="space-y-4">
-            {/* Instant verification code notification banner */}
-            {previewCode && (
-              <div className="p-3 rounded-xl bg-orange-950/40 border border-orange-500/40 text-center space-y-1">
-                <div className="text-[11px] text-orange-300 font-medium">
-                  ⚡ Verification Code Sent:
-                </div>
-                <div className="text-xl font-mono font-black tracking-widest text-orange-400 bg-[#141418] py-1.5 px-4 rounded-lg inline-block border border-orange-500/30 select-all">
-                  {previewCode}
-                </div>
+            <div className="p-3 rounded-xl bg-[#202026] border border-[#2d2d38] text-center space-y-1">
+              <div className="text-xs font-semibold text-white">
+                📬 Check your inbox or phone
               </div>
-            )}
+              <p className="text-[11px] text-gray-400">
+                We sent a 6-digit security code to{" "}
+                <span className="font-mono text-orange-400 font-semibold">{target}</span>. Please enter it below.
+              </p>
+            </div>
 
             <div>
               <label className="block text-xs font-semibold text-gray-300 mb-2 text-center">

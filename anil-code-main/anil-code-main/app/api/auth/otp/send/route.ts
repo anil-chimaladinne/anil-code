@@ -54,8 +54,6 @@ export async function POST(req: NextRequest) {
       success: true,
       target: cleanTarget,
       expiresAt,
-      // Provide demo/testing preview code so visitor is never blocked if email server isn't hooked up yet
-      previewCode: code,
       message: cleanTarget.includes("@")
         ? `Verification code sent to ${cleanTarget}`
         : `Verification code sent to ${cleanTarget}`,
