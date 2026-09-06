@@ -185,11 +185,13 @@ export default function NotepadRoomPage() {
     trackVisitor();
   }, [roomId, trackVisitor]);
 
-  // Initialize Real-Time Sync (Ultra-fast 400ms polling + local BroadcastChannel)
+  // Initialize Real-Time Sync (0ms SSE Stream + BroadcastChannel + Fast Fallback)
   useEffect(() => {
     if (!roomId) return;
 
-    // 1. Setup local BroadcastChannel for instant same-browser cross-tab sync
+    let eventSource: EventSource | null = null;
+
+    // 1. Setup local BroadcastChannel for instant same-browser cross-tab sync (0ms)
     if (typeof window !== "undefined" && "BroadcastChannel" in window) {
       try {
         const bc = new BroadcastChannel(`anil6_room_${roomId}`);
@@ -208,7 +210,7 @@ export default function NotepadRoomPage() {
                 if (pos) editorRef.current.setPosition(pos);
                 setTimeout(() => {
                   isRemoteUpdate.current = false;
-                }, 40);
+                }, 30);
               }
             } else {
               setCode(event.data.code);
@@ -221,7 +223,44 @@ export default function NotepadRoomPage() {
       } catch {}
     }
 
-    // 2. Fetch initial room state
+    // 2. Setup Server-Sent Events (SSE) for 0ms instant remote multi-user synchronization!
+    if (typeof window !== "undefined" && "EventSource" in window) {
+      try {
+        const streamUrl = `/api/sync/${roomId}/stream?userId=${userId.current}&name=${encodeURIComponent(userName)}`;
+        eventSource = new EventSource(streamUrl);
+
+        eventSource.onmessage = (e) => {
+          try {
+            if (!e.data || e.data.startsWith(":")) return;
+            const data = JSON.parse(e.data);
+
+            if (data.usersCount) setUsersCount(data.usersCount);
+            if (data.activeUsers) setActiveUsers(data.activeUsers);
+
+            if (data.code !== undefined && data.senderId !== userId.current) {
+              if (editorRef.current) {
+                const cur = editorRef.current.getValue();
+                if (cur !== data.code) {
+                  isRemoteUpdate.current = true;
+                  const pos = editorRef.current.getPosition();
+                  editorRef.current.setValue(data.code);
+                  if (pos) editorRef.current.setPosition(pos);
+                  setCode(data.code);
+                  setTimeout(() => {
+                    isRemoteUpdate.current = false;
+                  }, 30);
+                }
+              } else {
+                setCode(data.code);
+              }
+              if (data.language) setLanguage(data.language);
+            }
+          } catch {}
+        };
+      } catch {}
+    }
+
+    // 3. Initial fetch & reliable fallback polling
     fetch(`/api/sync/${roomId}?userId=${userId.current}&name=${encodeURIComponent(userName)}`)
       .then((res) => res.json())
       .then((data) => {
@@ -237,12 +276,11 @@ export default function NotepadRoomPage() {
           lastLocalVersion.current = data.version || 1;
           setTimeout(() => {
             isRemoteUpdate.current = false;
-          }, 40);
+          }, 30);
         }
       })
       .catch(() => {});
 
-    // 3. Fast Serverless Live Polling (400ms for seamless real-time typing across all users)
     const pollInterval = setInterval(async () => {
       try {
         const res = await fetch(
@@ -266,7 +304,7 @@ export default function NotepadRoomPage() {
                   setCode(data.code);
                   setTimeout(() => {
                     isRemoteUpdate.current = false;
-                  }, 40);
+                  }, 30);
                 }
               } else {
                 setCode(data.code);
@@ -276,10 +314,13 @@ export default function NotepadRoomPage() {
           }
         }
       } catch {}
-    }, 400);
+    }, 1200);
 
     return () => {
       clearInterval(pollInterval);
+      if (eventSource) {
+        eventSource.close();
+      }
       if (broadcastChannelRef.current) {
         broadcastChannelRef.current.close();
       }

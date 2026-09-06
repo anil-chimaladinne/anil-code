@@ -106,7 +106,42 @@ function extractUserMetadata(
   };
 }
 
-function getOrInitRoom(roomId: string) {
+// PubSub room listener store for 0ms Server-Sent Events broadcasting
+type RoomListener = (data: any) => void;
+
+declare global {
+  // eslint-disable-next-line no-var
+  var roomListeners: Map<string, Set<RoomListener>> | undefined;
+}
+
+const listeners = globalThis.roomListeners || new Map<string, Set<RoomListener>>();
+globalThis.roomListeners = listeners;
+
+export function subscribeRoom(roomId: string, listener: RoomListener) {
+  if (!listeners.has(roomId)) {
+    listeners.set(roomId, new Set());
+  }
+  listeners.get(roomId)!.add(listener);
+}
+
+export function unsubscribeRoom(roomId: string, listener: RoomListener) {
+  if (listeners.has(roomId)) {
+    listeners.get(roomId)!.delete(listener);
+  }
+}
+
+export function broadcastRoomEvent(roomId: string, data: any) {
+  if (listeners.has(roomId)) {
+    const roomSet = listeners.get(roomId)!;
+    roomSet.forEach((cb) => {
+      try {
+        cb(data);
+      } catch {}
+    });
+  }
+}
+
+export function getOrInitRoom(roomId: string): RoomData {
   if (!rooms.has(roomId)) {
     rooms.set(roomId, {
       code: "// Welcome to anil6!\n// Collaborate on code and notes in real time.\n\nfunction helloWorld() {\n  console.log('Hello from anil6!');\n}\n\nhelloWorld();\n",
@@ -162,7 +197,7 @@ export async function GET(
   });
 }
 
-// POST /api/sync/[roomId] - Broadcast code or language update
+// POST /api/sync/[roomId] - Instant 0ms broadcast code or language update
 export async function POST(
   req: NextRequest,
   { params }: { params: { roomId: string } }
@@ -180,19 +215,37 @@ export async function POST(
       room.users.set(userId, updatedUser);
     }
 
+    let changed = false;
+
     if (code !== undefined && code !== room.code) {
       room.code = code;
       room.version += 1;
       room.lastUpdated = Date.now();
+      changed = true;
     }
 
     if (language !== undefined && language !== room.language) {
       room.language = language;
       room.version += 1;
       room.lastUpdated = Date.now();
+      changed = true;
     }
 
     const activeUsers = Array.from(room.users.values());
+
+    // Instant SSE Broadcast to all connected users in 0ms!
+    if (changed) {
+      broadcastRoomEvent(roomId, {
+        type: "code-update",
+        code: room.code,
+        language: room.language,
+        version: room.version,
+        senderId: userId,
+        senderName: name || "User",
+        usersCount: Math.max(1, activeUsers.length),
+        activeUsers,
+      });
+    }
 
     return NextResponse.json({
       success: true,
