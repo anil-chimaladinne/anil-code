@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { GoogleAuthModal, UserProfile } from "@/components/auth/GoogleAuthModal";
 import { GoogleOneTap } from "@/components/auth/GoogleOneTap";
+import { MandatoryAuthGate } from "@/components/auth/MandatoryAuthGate";
 
 const LANGUAGES = [
   { id: "plaintext", name: "Plain Text", ext: ".txt" },
@@ -54,6 +55,7 @@ export default function NotepadRoomPage() {
   const [isUsersModalOpen, setIsUsersModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [isMounted, setIsMounted] = useState(false);
 
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
@@ -72,7 +74,9 @@ export default function NotepadRoomPage() {
       if (saved) {
         setUserProfile(JSON.parse(saved));
       }
-    } catch {}
+    } catch {} finally {
+      setIsMounted(true);
+    }
   }, []);
 
   // Send visitor tracking log with profile
@@ -324,6 +328,15 @@ export default function NotepadRoomPage() {
   const currentLangName =
     LANGUAGES.find((l) => l.id === language)?.name || "JavaScript";
 
+  if (isMounted && !userProfile) {
+    return (
+      <MandatoryAuthGate
+        roomId={roomId}
+        onAuthenticate={handleProfileUpdate}
+      />
+    );
+  }
+
   return (
     <div
       className={`flex h-screen w-screen flex-col overflow-hidden ${
@@ -406,32 +419,13 @@ export default function NotepadRoomPage() {
                   </button>
                 </div>
 
-                {/* Sign-in prompt if not yet logged in */}
-                {!userProfile && (
-                  <div className="mb-3 p-2.5 rounded-lg bg-orange-950/30 border border-orange-500/30 flex items-center justify-between gap-2">
-                    <div className="text-[11px] text-orange-200">
-                      <span className="font-semibold text-white">Identify yourself:</span> Connect Gmail to display your name & avatar.
-                    </div>
-                    <button
-                      onClick={() => {
-                        setIsUsersModalOpen(false);
-                        setIsAuthModalOpen(true);
-                      }}
-                      className="px-2 py-1 rounded bg-orange-600 hover:bg-orange-500 text-white font-semibold text-[10px] whitespace-nowrap transition-colors cursor-pointer"
-                    >
-                      Sign In
-                    </button>
-                  </div>
-                )}
-
                 {/* Users List with Gmail & Verified Name */}
                 <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
                   {activeUsers.length > 0 ? (
                     activeUsers.map((u, idx) => {
                       const isSelf = u.userId === userId.current;
-                      const hasEmail = Boolean(u.email || (isSelf && userProfile?.email));
                       const displayName =
-                        u.name || (isSelf && userProfile?.name) || (isSelf ? "You (Active)" : `Guest User ${idx + 1}`);
+                        u.name || (isSelf && userProfile?.name) || (isSelf ? "You (Active)" : `User ${idx + 1}`);
                       const displayEmail = u.email || (isSelf && userProfile?.email) || null;
                       const displayAvatar = u.avatar || (isSelf && userProfile?.avatar) || null;
 
@@ -479,15 +473,10 @@ export default function NotepadRoomPage() {
                           </div>
 
                           {/* Gmail Badge */}
-                          {displayEmail ? (
+                          {displayEmail && (
                             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-orange-500/10 border border-orange-500/20 text-orange-300 font-mono text-[11px] truncate">
                               <Mail className="h-3 w-3 text-orange-400 shrink-0" />
                               <span className="truncate">{displayEmail}</span>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-1.5 text-gray-500 text-[10px]">
-                              <User className="h-3 w-3 shrink-0" />
-                              <span>Guest (No Gmail attached)</span>
                             </div>
                           )}
 
@@ -550,41 +539,27 @@ export default function NotepadRoomPage() {
 
         {/* Right: User Profile Button, Language, Theme, Copy, Download, Clear, Share */}
         <div className="flex items-center gap-2">
-          {/* Google Sign-in / User Profile Button */}
+          {/* User Profile Button */}
           <button
             onClick={() => setIsAuthModalOpen(true)}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border transition-all cursor-pointer ${
-              userProfile
-                ? "bg-orange-950/30 border-orange-500/40 hover:bg-orange-900/40 text-orange-200"
-                : "bg-[#25252b] border-[#383842] hover:bg-[#2e2e36] text-gray-300"
-            }`}
-            title={userProfile ? userProfile.email : "Sign in with Google"}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border bg-orange-950/30 border-orange-500/40 hover:bg-orange-900/40 text-orange-200 transition-all cursor-pointer"
+            title={userProfile?.email || userProfile?.name || "Profile"}
           >
-            {userProfile ? (
-              <>
-                <div className="h-4 w-4 rounded-full bg-orange-600 flex items-center justify-center text-[9px] font-bold text-white overflow-hidden">
-                  {userProfile.avatar ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={userProfile.avatar}
-                      alt={userProfile.name}
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    userProfile.name.charAt(0).toUpperCase()
-                  )}
-                </div>
-                <span className="font-medium max-w-[80px] sm:max-w-[120px] truncate hidden xs:inline">
-                  {userProfile.name}
-                </span>
-              </>
-            ) : (
-              <>
-                <Mail className="h-3.5 w-3.5 text-orange-400" />
-                <span className="hidden sm:inline font-medium">Google Sign-In</span>
-                <span className="sm:hidden font-medium">Sign-In</span>
-              </>
-            )}
+            <div className="h-4 w-4 rounded-full bg-orange-600 flex items-center justify-center text-[9px] font-bold text-white overflow-hidden">
+              {userProfile?.avatar ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={userProfile.avatar}
+                  alt={userProfile.name}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                userProfile?.name?.charAt(0).toUpperCase() || "U"
+              )}
+            </div>
+            <span className="font-medium max-w-[80px] sm:max-w-[120px] truncate hidden xs:inline">
+              {userProfile?.name || "Profile"}
+            </span>
           </button>
 
           {/* Language Selector Dropdown */}

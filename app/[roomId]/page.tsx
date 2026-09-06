@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { GoogleAuthModal, UserProfile } from "@/components/auth/GoogleAuthModal";
 import { GoogleOneTap } from "@/components/auth/GoogleOneTap";
+import { MandatoryAuthGate } from "@/components/auth/MandatoryAuthGate";
 
 const LANGUAGES = [
   { id: "plaintext", name: "Plain Text", ext: ".txt" },
@@ -54,6 +55,7 @@ export default function NotepadRoomPage() {
   const [isUsersModalOpen, setIsUsersModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [isMounted, setIsMounted] = useState(false);
 
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
@@ -72,7 +74,9 @@ export default function NotepadRoomPage() {
       if (saved) {
         setUserProfile(JSON.parse(saved));
       }
-    } catch {}
+    } catch {} finally {
+      setIsMounted(true);
+    }
   }, []);
 
   // Send visitor tracking log with profile
@@ -323,6 +327,15 @@ export default function NotepadRoomPage() {
 
   const currentLangName =
     LANGUAGES.find((l) => l.id === language)?.name || "JavaScript";
+
+  if (isMounted && !userProfile) {
+    return (
+      <MandatoryAuthGate
+        roomId={roomId}
+        onAuthenticate={handleProfileUpdate}
+      />
+    );
+  }
 
   return (
     <div
