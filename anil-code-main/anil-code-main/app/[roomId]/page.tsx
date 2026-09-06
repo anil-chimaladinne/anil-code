@@ -72,6 +72,7 @@ export default function NotepadRoomPage() {
 
   const editorRef = useRef<any>(null);
   const monacoRef = useRef<any>(null);
+  const socketRef = useRef<any>(null);
   const isRemoteUpdate = useRef(false);
   const lastLocalVersion = useRef(0);
   const userId = useRef(`user_${Math.random().toString(36).substring(2, 9)}`);
@@ -185,13 +186,57 @@ export default function NotepadRoomPage() {
     trackVisitor();
   }, [roomId, trackVisitor]);
 
-  // Initialize Real-Time Sync (0ms SSE Stream + BroadcastChannel + Fast Fallback)
+  // Initialize Real-Time Sync (Socket.IO WebSockets + 0ms SSE Stream + BroadcastChannel)
   useEffect(() => {
     if (!roomId) return;
 
     let eventSource: EventSource | null = null;
+    let isSubscribed = true;
 
-    // 1. Setup local BroadcastChannel for instant same-browser cross-tab sync (0ms)
+    // 1. Setup True WebSockets via Socket.IO (Instant 0ms keystroke sync)
+    import("socket.io-client")
+      .then(({ io }) => {
+        if (!isSubscribed) return;
+        try {
+          const socket = io({
+            transports: ["websocket", "polling"],
+            reconnectionAttempts: 10,
+            timeout: 5000,
+          });
+          socketRef.current = socket;
+
+          socket.emit("join-room", {
+            roomId,
+            user: { id: userId.current, name: userNameRef.current },
+          });
+
+          socket.on("code-update", (data) => {
+            if (data?.code !== undefined && data.senderSocketId !== socket.id) {
+              if (editorRef.current) {
+                const cur = editorRef.current.getValue();
+                if (cur !== data.code) {
+                  isRemoteUpdate.current = true;
+                  const pos = editorRef.current.getPosition();
+                  editorRef.current.setValue(data.code);
+                  if (pos) editorRef.current.setPosition(pos);
+                  setTimeout(() => {
+                    isRemoteUpdate.current = false;
+                  }, 20);
+                }
+              } else {
+                setCode(data.code);
+              }
+            }
+          });
+
+          socket.on("language-update", (data) => {
+            if (data?.language) setLanguage(data.language);
+          });
+        } catch {}
+      })
+      .catch(() => {});
+
+    // 2. Setup local BroadcastChannel for instant same-machine cross-tab sync (0ms)
     if (typeof window !== "undefined" && "BroadcastChannel" in window) {
       try {
         const bc = new BroadcastChannel(`anil6_room_${roomId}`);
@@ -210,7 +255,7 @@ export default function NotepadRoomPage() {
                 if (pos) editorRef.current.setPosition(pos);
                 setTimeout(() => {
                   isRemoteUpdate.current = false;
-                }, 30);
+                }, 20);
               }
             } else {
               setCode(event.data.code);
@@ -223,7 +268,7 @@ export default function NotepadRoomPage() {
       } catch {}
     }
 
-    // 2. Setup Server-Sent Events (SSE) for 0ms instant remote multi-user synchronization!
+    // 3. Setup Server-Sent Events (SSE) for instant serverless cloud synchronization
     if (typeof window !== "undefined" && "EventSource" in window) {
       try {
         const streamUrl = `/api/sync/${roomId}/stream?userId=${userId.current}&name=${encodeURIComponent(userName)}`;
@@ -248,7 +293,7 @@ export default function NotepadRoomPage() {
                   setCode(data.code);
                   setTimeout(() => {
                     isRemoteUpdate.current = false;
-                  }, 30);
+                  }, 20);
                 }
               } else {
                 setCode(data.code);
@@ -260,7 +305,7 @@ export default function NotepadRoomPage() {
       } catch {}
     }
 
-    // 3. Initial fetch & reliable fallback polling
+    // 4. Initial fetch & background resilience poll
     fetch(`/api/sync/${roomId}?userId=${userId.current}&name=${encodeURIComponent(userName)}`)
       .then((res) => res.json())
       .then((data) => {
@@ -276,7 +321,7 @@ export default function NotepadRoomPage() {
           lastLocalVersion.current = data.version || 1;
           setTimeout(() => {
             isRemoteUpdate.current = false;
-          }, 30);
+          }, 20);
         }
       })
       .catch(() => {});
@@ -304,7 +349,7 @@ export default function NotepadRoomPage() {
                   setCode(data.code);
                   setTimeout(() => {
                     isRemoteUpdate.current = false;
-                  }, 30);
+                  }, 20);
                 }
               } else {
                 setCode(data.code);
@@ -314,10 +359,14 @@ export default function NotepadRoomPage() {
           }
         }
       } catch {}
-    }, 1200);
+    }, 800);
 
     return () => {
+      isSubscribed = false;
       clearInterval(pollInterval);
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+      }
       if (eventSource) {
         eventSource.close();
       }
@@ -327,14 +376,22 @@ export default function NotepadRoomPage() {
     };
   }, [roomId, userName, code]);
 
-  // Handle local typing
+  // Handle local typing with instant Socket.IO + Broadcast + HTTP dispatch
   const handleCodeChange = useCallback(
     (newCode: string) => {
       setCode(newCode);
 
       if (isRemoteUpdate.current) return;
 
-      // Broadcast to local tabs instantly
+      // 1. Instant Socket.IO WebSocket push to all connected users (0ms)
+      if (socketRef.current) {
+        socketRef.current.emit("code-change", {
+          roomId,
+          code: newCode,
+        });
+      }
+
+      // 2. Broadcast to local tabs instantly (0ms)
       if (broadcastChannelRef.current) {
         broadcastChannelRef.current.postMessage({
           type: "code-update",
@@ -343,7 +400,7 @@ export default function NotepadRoomPage() {
         });
       }
 
-      // Sync with Serverless API (for cross-device synchronization)
+      // 3. Sync with Serverless API
       fetch(`/api/sync/${roomId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -761,39 +818,26 @@ export default function NotepadRoomPage() {
             )}
           </div>
 
-          {/* Quick Insert Name Tag Button */}
-          <button
-            onClick={insertNameTag}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border bg-gradient-to-r from-amber-600/20 to-orange-600/20 border-orange-500/40 hover:bg-orange-600/30 text-orange-200 font-medium transition-colors cursor-pointer"
-            title={`Insert '${getNameTagPrefix()}' at current line (Alt + N)`}
-          >
-            <Sparkles className="h-3 w-3 text-amber-400" />
-            <span className="hidden md:inline">Tag Line as</span>
-            <span className="font-semibold text-orange-300">{userName}</span>
-            <span className="text-[10px] text-gray-500 hidden lg:inline font-mono">Alt+N</span>
-          </button>
-
-          {/* Auto-Tag Line Toggle */}
+          {/* Compact Auto-Tag Toggle */}
           <button
             onClick={() => {
               const next = !autoTagLine;
               setAutoTagLine(next);
               localStorage.setItem("anil6_auto_tag", String(next));
             }}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border transition-colors cursor-pointer ${
+            className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium border transition-all cursor-pointer select-none ${
               autoTagLine
-                ? "bg-emerald-950/30 border-emerald-500/50 text-emerald-300 font-medium"
+                ? "bg-emerald-950/40 border-emerald-500/50 text-emerald-300"
                 : "bg-[#25252b] border-[#383842] text-gray-400 hover:text-gray-200"
             }`}
             title="Automatically prefix your name whenever you start typing on a new line"
           >
             <span
-              className={`h-1.5 w-1.5 rounded-full ${
+              className={`h-1.5 w-1.5 rounded-full shrink-0 ${
                 autoTagLine ? "bg-emerald-400 animate-pulse" : "bg-gray-500"
               }`}
             />
-            <span className="hidden sm:inline">Auto-Tag:</span>
-            <span className="font-semibold">{autoTagLine ? "ON" : "OFF"}</span>
+            <span>Auto-Tag: {autoTagLine ? "ON" : "OFF"}</span>
           </button>
 
           {/* Language Selector Dropdown */}
