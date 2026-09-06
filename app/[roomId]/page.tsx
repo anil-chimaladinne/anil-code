@@ -187,6 +187,41 @@ export default function NotepadRoomPage() {
     trackVisitor();
   }, [roomId, trackVisitor]);
 
+  const codeRef = useRef(code);
+  useEffect(() => {
+    codeRef.current = code;
+  }, [code]);
+
+  // Smoothly apply incoming remote changes without resetting cursor or undo stack
+  const applyRemoteCode = useCallback((newCode: string) => {
+    if (newCode === undefined || newCode === null) return;
+    if (codeRef.current === newCode) return;
+    codeRef.current = newCode;
+    setCode(newCode);
+
+    if (editorRef.current) {
+      const editor = editorRef.current;
+      const model = editor.getModel();
+      if (model) {
+        const cur = model.getValue();
+        if (cur !== newCode) {
+          isRemoteUpdate.current = true;
+          const fullRange = model.getFullModelRange();
+          editor.executeEdits("remote-sync", [
+            {
+              range: fullRange,
+              text: newCode,
+              forceMoveMarkers: true,
+            },
+          ]);
+          setTimeout(() => {
+            isRemoteUpdate.current = false;
+          }, 30);
+        }
+      }
+    }
+  }, []);
+
   // Initialize Real-Time Sync (Socket.IO WebSockets + 0ms SSE Stream + BroadcastChannel)
   useEffect(() => {
     if (!roomId) return;
@@ -213,20 +248,7 @@ export default function NotepadRoomPage() {
 
           socket.on("code-update", (data) => {
             if (data?.code !== undefined && data.senderSocketId !== socket.id) {
-              if (editorRef.current) {
-                const cur = editorRef.current.getValue();
-                if (cur !== data.code) {
-                  isRemoteUpdate.current = true;
-                  const pos = editorRef.current.getPosition();
-                  editorRef.current.setValue(data.code);
-                  if (pos) editorRef.current.setPosition(pos);
-                  setTimeout(() => {
-                    isRemoteUpdate.current = false;
-                  }, 20);
-                }
-              } else {
-                setCode(data.code);
-              }
+              applyRemoteCode(data.code);
             }
           });
 
@@ -247,20 +269,7 @@ export default function NotepadRoomPage() {
             event.data?.type === "code-update" &&
             event.data.senderId !== userId.current
           ) {
-            if (editorRef.current) {
-              const cur = editorRef.current.getValue();
-              if (cur !== event.data.code) {
-                isRemoteUpdate.current = true;
-                const pos = editorRef.current.getPosition();
-                editorRef.current.setValue(event.data.code);
-                if (pos) editorRef.current.setPosition(pos);
-                setTimeout(() => {
-                  isRemoteUpdate.current = false;
-                }, 20);
-              }
-            } else {
-              setCode(event.data.code);
-            }
+            applyRemoteCode(event.data.code);
           }
           if (event.data?.type === "language-update") {
             setLanguage(event.data.language);
@@ -284,21 +293,7 @@ export default function NotepadRoomPage() {
             if (data.activeUsers) setActiveUsers(data.activeUsers);
 
             if (data.code !== undefined && data.senderId !== userId.current) {
-              if (editorRef.current) {
-                const cur = editorRef.current.getValue();
-                if (cur !== data.code) {
-                  isRemoteUpdate.current = true;
-                  const pos = editorRef.current.getPosition();
-                  editorRef.current.setValue(data.code);
-                  if (pos) editorRef.current.setPosition(pos);
-                  setCode(data.code);
-                  setTimeout(() => {
-                    isRemoteUpdate.current = false;
-                  }, 20);
-                }
-              } else {
-                setCode(data.code);
-              }
+              applyRemoteCode(data.code);
               if (data.language) setLanguage(data.language);
             }
           } catch {}
@@ -310,19 +305,12 @@ export default function NotepadRoomPage() {
     fetch(`/api/sync/${roomId}?userId=${userId.current}&name=${encodeURIComponent(userName)}`)
       .then((res) => res.json())
       .then((data) => {
-        if (data.code !== undefined && !code) {
-          isRemoteUpdate.current = true;
-          setCode(data.code);
-          if (editorRef.current) {
-            editorRef.current.setValue(data.code);
-          }
+        if (data.code !== undefined && !codeRef.current) {
+          applyRemoteCode(data.code);
           if (data.language) setLanguage(data.language);
           if (data.usersCount) setUsersCount(data.usersCount);
           if (data.activeUsers) setActiveUsers(data.activeUsers);
           lastLocalVersion.current = data.version || 1;
-          setTimeout(() => {
-            isRemoteUpdate.current = false;
-          }, 20);
         }
       })
       .catch(() => {});
@@ -340,21 +328,7 @@ export default function NotepadRoomPage() {
           if (data.code !== undefined && data.version > lastLocalVersion.current) {
             lastLocalVersion.current = data.version;
             if (!isRemoteUpdate.current) {
-              if (editorRef.current) {
-                const cur = editorRef.current.getValue();
-                if (cur !== data.code) {
-                  isRemoteUpdate.current = true;
-                  const pos = editorRef.current.getPosition();
-                  editorRef.current.setValue(data.code);
-                  if (pos) editorRef.current.setPosition(pos);
-                  setCode(data.code);
-                  setTimeout(() => {
-                    isRemoteUpdate.current = false;
-                  }, 20);
-                }
-              } else {
-                setCode(data.code);
-              }
+              applyRemoteCode(data.code);
               if (data.language) setLanguage(data.language);
             }
           }
@@ -375,7 +349,7 @@ export default function NotepadRoomPage() {
         broadcastChannelRef.current.close();
       }
     };
-  }, [roomId, userName, code]);
+  }, [roomId, userName, applyRemoteCode]);
 
   // Handle local typing with instant Socket.IO + Broadcast + debounced HTTP dispatch
   const handleCodeChange = useCallback(
@@ -505,74 +479,16 @@ export default function NotepadRoomPage() {
     editorRef.current = editor;
     monacoRef.current = monaco;
 
-    // Automatic Name Tagging on typing / Enter
-    editor.onKeyDown((e: any) => {
-      if (!autoTagLineRef.current) return;
-      const currentUserName = userNameRef.current || "User";
-      const currentLang = languageRef.current || "javascript";
-      const prefix = getCommentPrefix(currentLang);
-      const tag = prefix ? (prefix === "<!--" ? `<!-- [${currentUserName}]: --> ` : `${prefix} [${currentUserName}]: `) : `[${currentUserName}]: `;
-
-      const model = editor.getModel();
-      const pos = editor.getPosition();
-      if (!model || !pos) return;
-
-      // 1. Enter Key: Start new line automatically with author name tag
-      if (
-        e.keyCode === monaco.KeyCode.Enter &&
-        !e.shiftKey &&
-        !e.altKey &&
-        !e.ctrlKey &&
-        !e.metaKey
-      ) {
-        e.preventDefault();
-        e.stopPropagation();
-
-        const selection = editor.getSelection();
-        const textToInsert = "\n" + tag;
-        editor.executeEdits("auto-tag-enter", [
-          {
-            range: selection,
-            text: textToInsert,
-            forceMoveMarkers: true,
-          },
-        ]);
-        const nextLine = pos.lineNumber + 1;
-        editor.setPosition({ lineNumber: nextLine, column: tag.length + 1 });
-        editor.revealPosition({ lineNumber: nextLine, column: tag.length + 1 });
-        return;
-      }
-
-      // 2. Typing on an empty line: Prepend author name tag automatically before character
-      const currentLineText = model.getLineContent(pos.lineNumber);
-      const isNavOrControlKey =
-        e.ctrlKey ||
-        e.metaKey ||
-        e.altKey ||
-        e.keyCode === monaco.KeyCode.Backspace ||
-        e.keyCode === monaco.KeyCode.Delete ||
-        e.keyCode === monaco.KeyCode.Tab ||
-        e.keyCode === monaco.KeyCode.Escape ||
-        e.keyCode === monaco.KeyCode.UpArrow ||
-        e.keyCode === monaco.KeyCode.DownArrow ||
-        e.keyCode === monaco.KeyCode.LeftArrow ||
-        e.keyCode === monaco.KeyCode.RightArrow;
-
-      if (currentLineText.trim() === "" && !isNavOrControlKey) {
-        if (!currentLineText.includes(`[${currentUserName}]`)) {
-          editor.executeEdits("auto-tag-start", [
-            {
-              range: new monaco.Range(pos.lineNumber, 1, pos.lineNumber, pos.column),
-              text: tag,
-              forceMoveMarkers: true,
-            },
-          ]);
-          editor.setPosition({ lineNumber: pos.lineNumber, column: tag.length + 1 });
-        }
-      }
+    // Fast and smooth editor settings
+    editor.updateOptions({
+      smoothScrolling: true,
+      cursorSmoothCaretAnimation: "on",
+      cursorBlinking: "smooth",
+      wordWrap: "on",
+      tabSize: 2,
     });
 
-    // Add keyboard shortcut Alt+N to manually insert name tag
+    // Add keyboard shortcut Alt+N to quickly insert author name tag
     editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.KeyN, () => {
       insertNameTag();
     });
