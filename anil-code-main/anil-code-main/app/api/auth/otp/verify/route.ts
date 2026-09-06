@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
 
     if (!target || !code) {
       return NextResponse.json(
-        { error: "Target (Gmail or Mobile) and 6-digit Code are required." },
+        { error: "Gmail address and 6-digit Code are required." },
         { status: 400 }
       );
     }
@@ -23,13 +23,9 @@ export async function POST(req: NextRequest) {
     }
 
     // Determine name & email
-    const isEmail = cleanTarget.includes("@");
-    const email = isEmail ? cleanTarget : `${cleanTarget.replace(/\D/g, "")}@mobile.anil6`;
     const userName =
       name ||
-      (isEmail
-        ? cleanTarget.split("@")[0].replace(/[._-]/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())
-        : `Mobile User (+${cleanTarget})`);
+      cleanTarget.split("@")[0].replace(/[._-]/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase());
 
     const avatar = `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(cleanTarget)}`;
 
@@ -51,7 +47,7 @@ export async function POST(req: NextRequest) {
       region: decodeURIComponent(region),
       browser: "Verified Visitor",
       os: "Identified",
-      device: isEmail ? "Desktop" : "Mobile",
+      device: "Desktop",
       page: roomId ? `/${roomId}` : "/",
       referrer: headers.get("referer") || "Direct",
       email: cleanTarget,
