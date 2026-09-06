@@ -231,19 +231,19 @@ export default function NotepadRoomPage() {
       <header
         className={`flex h-12 items-center justify-between px-4 select-none border-b shrink-0 z-30 ${
           theme === "vs-dark"
-            ? "bg-[#252526]/90 backdrop-blur-md border-[#333333] text-gray-200"
-            : "bg-[#f3f3f3]/90 backdrop-blur-md border-[#e0e0e0] text-gray-800"
+            ? "bg-[#1e1e1e] border-[#333333] text-gray-200"
+            : "bg-[#f8f9fa] border-[#e0e0e0] text-gray-800"
         }`}
       >
-        {/* Left: AM Logo and anil6 Brand Name */}
+        {/* Left: AM Logo and Anil6 Brand Name (Crisp & Blur-Free) */}
         <div className="flex items-center gap-3">
-          <a href="/" className="flex items-center gap-2.5 group font-bold tracking-tight text-sm">
-            {/* AM Logo Avatar */}
-            <div className="relative flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500 via-amber-500 to-orange-600 shadow-md shadow-orange-500/30 group-hover:scale-105 transition-all duration-200 border border-amber-400/40 text-white font-black text-xs tracking-wider select-none">
+          <a href="/" className="flex items-center gap-2.5 group font-bold tracking-tight">
+            {/* Crisp Blur-Free AM Logo Avatar */}
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-orange-600 border border-orange-400/60 text-white font-black text-sm tracking-wider select-none shadow-sm transition-transform duration-150 group-hover:scale-105">
               AM
             </div>
-            <span className="font-bold tracking-tight text-sm">
-              Anil<span className="text-orange-500">6</span>
+            <span className="font-bold tracking-tight text-base text-white">
+              Anil<span className="text-orange-500 font-extrabold">6</span>
             </span>
           </a>
 
