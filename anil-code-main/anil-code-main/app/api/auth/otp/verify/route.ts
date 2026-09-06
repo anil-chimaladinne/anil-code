@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyOtp } from "../../../../../lib/otp-store";
-import { addVisitorLog } from "../../../../../lib/visitor-store";
+import { verifyOtp } from "@/lib/otp-store";
+import { addVisitorLog } from "@/lib/visitor-store";
 
 export async function POST(req: NextRequest) {
   try {
