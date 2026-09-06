@@ -59,19 +59,101 @@ export default function NotepadRoomPage() {
   const [isUsersModalOpen, setIsUsersModalOpen] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
 
+  // User Name Tagging & Customization
+  const [userName, setUserName] = useState<string>("User");
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [inputName, setInputName] = useState("");
+  const [autoTagLine, setAutoTagLine] = useState<boolean>(true);
+
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
+  const [taggedToast, setTaggedToast] = useState(false);
   const [isLangOpen, setIsLangOpen] = useState(false);
 
   const editorRef = useRef<any>(null);
+  const monacoRef = useRef<any>(null);
   const isRemoteUpdate = useRef(false);
   const lastLocalVersion = useRef(0);
   const userId = useRef(`user_${Math.random().toString(36).substring(2, 9)}`);
   const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
 
+  // Initialize or load user name
   useEffect(() => {
-    setIsMounted(true);
+    try {
+      const savedName = localStorage.getItem("anil6_user_name");
+      if (savedName && savedName.trim()) {
+        setUserName(savedName.trim());
+      } else {
+        const randId = Math.floor(100 + Math.random() * 900);
+        const defaultName = `User-${randId}`;
+        setUserName(defaultName);
+        localStorage.setItem("anil6_user_name", defaultName);
+      }
+
+      const savedAutoTag = localStorage.getItem("anil6_auto_tag");
+      if (savedAutoTag !== null) {
+        setAutoTagLine(savedAutoTag === "true");
+      }
+    } catch {} finally {
+      setIsMounted(true);
+    }
   }, []);
+
+  const handleSaveName = () => {
+    const clean = inputName.trim();
+    if (clean) {
+      setUserName(clean);
+      localStorage.setItem("anil6_user_name", clean);
+    }
+    setIsEditingName(false);
+  };
+
+  const getCommentPrefix = (lang: string) => {
+    switch (lang) {
+      case "python":
+      case "shell":
+      case "bash":
+        return "#";
+      case "sql":
+        return "--";
+      case "html":
+        return "<!--";
+      case "plaintext":
+      case "markdown":
+        return "";
+      default:
+        return "//";
+    }
+  };
+
+  const getNameTagPrefix = () => {
+    const p = getCommentPrefix(language);
+    if (!p) return `[${userName}]: `;
+    if (p === "<!--") return `<!-- [${userName}]: --> `;
+    return `${p} [${userName}]: `;
+  };
+
+  // Insert user name tag on current line
+  const insertNameTag = () => {
+    if (!editorRef.current) return;
+    const editor = editorRef.current;
+    const tag = getNameTagPrefix();
+    const position = editor.getPosition();
+    const selection = editor.getSelection();
+
+    if (position) {
+      editor.executeEdits("name-tag", [
+        {
+          range: selection,
+          text: tag,
+          forceMoveMarkers: true,
+        },
+      ]);
+      editor.focus();
+      setTaggedToast(true);
+      setTimeout(() => setTaggedToast(false), 2000);
+    }
+  };
 
   // Send visitor tracking log
   const trackVisitor = useCallback(() => {
@@ -88,6 +170,7 @@ export default function NotepadRoomPage() {
             ? Intl.DateTimeFormat().resolvedOptions().timeZone
             : undefined,
         language: typeof navigator !== "undefined" ? navigator.language : undefined,
+        name: userName,
       };
 
       fetch("/api/track", {
@@ -96,13 +179,13 @@ export default function NotepadRoomPage() {
         body: JSON.stringify(payload),
       }).catch(() => {});
     } catch {}
-  }, [roomId]);
+  }, [roomId, userName]);
 
   useEffect(() => {
     trackVisitor();
   }, [roomId, trackVisitor]);
 
-  // Initialize Serverless Real-Time Sync (0 WebSocket errors on Vercel)
+  // Initialize Real-Time Sync (Ultra-fast 400ms polling + local BroadcastChannel)
   useEffect(() => {
     if (!roomId) return;
 
@@ -116,11 +199,20 @@ export default function NotepadRoomPage() {
             event.data?.type === "code-update" &&
             event.data.senderId !== userId.current
           ) {
-            isRemoteUpdate.current = true;
-            setCode(event.data.code);
-            setTimeout(() => {
-              isRemoteUpdate.current = false;
-            }, 50);
+            if (editorRef.current) {
+              const cur = editorRef.current.getValue();
+              if (cur !== event.data.code) {
+                isRemoteUpdate.current = true;
+                const pos = editorRef.current.getPosition();
+                editorRef.current.setValue(event.data.code);
+                if (pos) editorRef.current.setPosition(pos);
+                setTimeout(() => {
+                  isRemoteUpdate.current = false;
+                }, 40);
+              }
+            } else {
+              setCode(event.data.code);
+            }
           }
           if (event.data?.type === "language-update") {
             setLanguage(event.data.language);
@@ -130,45 +222,61 @@ export default function NotepadRoomPage() {
     }
 
     // 2. Fetch initial room state
-    fetch(`/api/sync/${roomId}?userId=${userId.current}`)
+    fetch(`/api/sync/${roomId}?userId=${userId.current}&name=${encodeURIComponent(userName)}`)
       .then((res) => res.json())
       .then((data) => {
         if (data.code !== undefined && !code) {
           isRemoteUpdate.current = true;
           setCode(data.code);
+          if (editorRef.current) {
+            editorRef.current.setValue(data.code);
+          }
           if (data.language) setLanguage(data.language);
           if (data.usersCount) setUsersCount(data.usersCount);
           if (data.activeUsers) setActiveUsers(data.activeUsers);
           lastLocalVersion.current = data.version || 1;
           setTimeout(() => {
             isRemoteUpdate.current = false;
-          }, 50);
+          }, 40);
         }
       })
       .catch(() => {});
 
-    // 3. Ultra-fast Serverless Live Polling (for real-time sync across devices)
+    // 3. Fast Serverless Live Polling (400ms for seamless real-time typing across all users)
     const pollInterval = setInterval(async () => {
       try {
-        const res = await fetch(`/api/sync/${roomId}?userId=${userId.current}`);
+        const res = await fetch(
+          `/api/sync/${roomId}?userId=${userId.current}&name=${encodeURIComponent(userName)}`
+        );
         if (res.ok) {
           const data = await res.json();
           if (data.usersCount) setUsersCount(data.usersCount);
           if (data.activeUsers) setActiveUsers(data.activeUsers);
-          if (data.version > lastLocalVersion.current) {
+
+          if (data.code !== undefined && data.version > lastLocalVersion.current) {
             lastLocalVersion.current = data.version;
             if (!isRemoteUpdate.current) {
-              isRemoteUpdate.current = true;
-              setCode(data.code);
-              setLanguage(data.language);
-              setTimeout(() => {
-                isRemoteUpdate.current = false;
-              }, 50);
+              if (editorRef.current) {
+                const cur = editorRef.current.getValue();
+                if (cur !== data.code) {
+                  isRemoteUpdate.current = true;
+                  const pos = editorRef.current.getPosition();
+                  editorRef.current.setValue(data.code);
+                  if (pos) editorRef.current.setPosition(pos);
+                  setCode(data.code);
+                  setTimeout(() => {
+                    isRemoteUpdate.current = false;
+                  }, 40);
+                }
+              } else {
+                setCode(data.code);
+              }
+              if (data.language) setLanguage(data.language);
             }
           }
         }
       } catch {}
-    }, 1000);
+    }, 400);
 
     return () => {
       clearInterval(pollInterval);
@@ -176,7 +284,7 @@ export default function NotepadRoomPage() {
         broadcastChannelRef.current.close();
       }
     };
-  }, [roomId]);
+  }, [roomId, userName, code]);
 
   // Handle local typing
   const handleCodeChange = useCallback(
@@ -202,6 +310,7 @@ export default function NotepadRoomPage() {
           code: newCode,
           language,
           userId: userId.current,
+          name: userName,
         }),
       })
         .then((r) => r.json())
@@ -210,7 +319,7 @@ export default function NotepadRoomPage() {
         })
         .catch(() => {});
     },
-    [roomId, language]
+    [roomId, language, userName]
   );
 
   // Handle language switch
@@ -232,6 +341,7 @@ export default function NotepadRoomPage() {
         code,
         language: newLang,
         userId: userId.current,
+        name: userName,
       }),
     }).catch(() => {});
   };
@@ -271,8 +381,14 @@ export default function NotepadRoomPage() {
     }
   };
 
-  const handleEditorMount: OnMount = (editor) => {
+  const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
+    monacoRef.current = monaco;
+
+    // Add keyboard shortcut Alt+N or Cmd+N to insert user name tag
+    editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.KeyN, () => {
+      insertNameTag();
+    });
   };
 
   const currentLangName =
@@ -478,8 +594,61 @@ export default function NotepadRoomPage() {
           </div>
         </div>
 
-        {/* Right: Language, Theme, Copy, Download, Clear, Share */}
+        {/* Right: User Name, Tag Line, Language, Theme, Copy, Download, Clear, Share */}
         <div className="flex items-center gap-2">
+          {/* User Name Badge & Quick Rename */}
+          <div className="relative">
+            {isEditingName ? (
+              <div className="flex items-center gap-1 bg-[#25252b] border border-orange-500/80 rounded-md px-2 py-0.5 shadow-sm">
+                <User className="h-3 w-3 text-orange-400" />
+                <input
+                  type="text"
+                  value={inputName}
+                  onChange={(e) => setInputName(e.target.value)}
+                  placeholder="Your Name"
+                  autoFocus
+                  maxLength={18}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleSaveName();
+                    if (e.key === "Escape") setIsEditingName(false);
+                  }}
+                  className="bg-transparent text-xs text-white outline-none w-20 font-medium placeholder-gray-500"
+                />
+                <button
+                  onClick={handleSaveName}
+                  className="text-[10px] text-emerald-400 hover:text-emerald-300 font-bold px-1"
+                >
+                  Save
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => {
+                  setInputName(userName);
+                  setIsEditingName(true);
+                }}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border bg-orange-950/20 border-orange-500/30 hover:border-orange-500/60 hover:bg-orange-950/40 text-orange-300 transition-all cursor-pointer select-none"
+                title="Click to rename your typing name tag"
+              >
+                <div className="h-2 w-2 rounded-full bg-orange-500 shrink-0" />
+                <span className="font-semibold max-w-[90px] truncate">{userName}</span>
+                <span className="text-[10px] text-orange-400/60 font-normal hidden sm:inline">✎</span>
+              </button>
+            )}
+          </div>
+
+          {/* Quick Insert Name Tag Button */}
+          <button
+            onClick={insertNameTag}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border bg-gradient-to-r from-amber-600/20 to-orange-600/20 border-orange-500/40 hover:bg-orange-600/30 text-orange-200 font-medium transition-colors cursor-pointer"
+            title={`Insert '${getNameTagPrefix()}' at current line (Alt + N)`}
+          >
+            <Sparkles className="h-3 w-3 text-amber-400" />
+            <span className="hidden md:inline">Tag Line as</span>
+            <span className="font-semibold text-orange-300">{userName}</span>
+            <span className="text-[10px] text-gray-500 hidden lg:inline font-mono">Alt+N</span>
+          </button>
+
           {/* Language Selector Dropdown */}
           <div className="relative">
             <button

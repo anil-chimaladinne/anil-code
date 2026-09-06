@@ -24,17 +24,14 @@ interface RoomData {
   users: Map<string, ActiveUserDetail>;
 }
 
-// Serverless in-memory room store
+// Serverless in-memory room store (persistent across all serverless invocations)
 declare global {
   // eslint-disable-next-line no-var
   var serverlessRooms: Map<string, RoomData> | undefined;
 }
 
-const rooms = global.serverlessRooms || new Map<string, RoomData>();
-
-if (process.env.NODE_ENV !== "production") {
-  global.serverlessRooms = rooms;
-}
+const rooms = globalThis.serverlessRooms || new Map<string, RoomData>();
+globalThis.serverlessRooms = rooms;
 
 function parseUserAgent(ua: string) {
   let browser = "Other";
