@@ -235,15 +235,15 @@ export default function NotepadRoomPage() {
             : "bg-[#f3f3f3]/90 backdrop-blur-md border-[#e0e0e0] text-gray-800"
         }`}
       >
-        {/* Left: AM Logo and Brand Name */}
+        {/* Left: AM Logo and anil6 Brand Name */}
         <div className="flex items-center gap-3">
           <a href="/" className="flex items-center gap-2.5 group font-bold tracking-tight text-sm">
             {/* AM Logo Avatar */}
             <div className="relative flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500 via-amber-500 to-orange-600 shadow-md shadow-orange-500/30 group-hover:scale-105 transition-all duration-200 border border-amber-400/40 text-white font-black text-xs tracking-wider select-none">
               AM
             </div>
-            <span className="font-bold tracking-tight text-base">
-              AM
+            <span className="font-bold tracking-tight text-sm">
+              anil<span className="text-orange-500">6</span>
             </span>
           </a>
 
