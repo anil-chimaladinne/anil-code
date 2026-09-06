@@ -225,12 +225,23 @@ export async function sendVerificationCode(
           body: body.toString(),
         });
 
-        if (res.ok) {
+        const resData = await res.json();
+        console.log("[OTP Service] Twilio response:", resData);
+        if (res.ok && resData.sid) {
           return {
             success: true,
             delivered: true,
             method: "twilio",
             message: `SMS dispatched to ${cleanTarget}! Check your mobile messages.`,
+          };
+        } else {
+          const detail = resData.message || "Twilio delivery failed";
+          return {
+            success: true,
+            delivered: false,
+            method: "demo_preview",
+            previewCode: code,
+            message: `Twilio notice: ${detail}. Use code below.`,
           };
         }
       } catch (twilioErr: any) {
