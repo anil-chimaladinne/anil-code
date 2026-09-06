@@ -381,11 +381,94 @@ export default function NotepadRoomPage() {
     }
   };
 
+  const userNameRef = useRef(userName);
+  const languageRef = useRef(language);
+  const autoTagLineRef = useRef(autoTagLine);
+
+  useEffect(() => {
+    userNameRef.current = userName;
+  }, [userName]);
+
+  useEffect(() => {
+    languageRef.current = language;
+  }, [language]);
+
+  useEffect(() => {
+    autoTagLineRef.current = autoTagLine;
+  }, [autoTagLine]);
+
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
 
-    // Add keyboard shortcut Alt+N or Cmd+N to insert user name tag
+    // Automatic Name Tagging on typing / Enter
+    editor.onKeyDown((e: any) => {
+      if (!autoTagLineRef.current) return;
+      const currentUserName = userNameRef.current || "User";
+      const currentLang = languageRef.current || "javascript";
+      const prefix = getCommentPrefix(currentLang);
+      const tag = prefix ? (prefix === "<!--" ? `<!-- [${currentUserName}]: --> ` : `${prefix} [${currentUserName}]: `) : `[${currentUserName}]: `;
+
+      const model = editor.getModel();
+      const pos = editor.getPosition();
+      if (!model || !pos) return;
+
+      // 1. Enter Key: Start new line automatically with author name tag
+      if (
+        e.keyCode === monaco.KeyCode.Enter &&
+        !e.shiftKey &&
+        !e.altKey &&
+        !e.ctrlKey &&
+        !e.metaKey
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const selection = editor.getSelection();
+        const textToInsert = "\n" + tag;
+        editor.executeEdits("auto-tag-enter", [
+          {
+            range: selection,
+            text: textToInsert,
+            forceMoveMarkers: true,
+          },
+        ]);
+        const nextLine = pos.lineNumber + 1;
+        editor.setPosition({ lineNumber: nextLine, column: tag.length + 1 });
+        editor.revealPosition({ lineNumber: nextLine, column: tag.length + 1 });
+        return;
+      }
+
+      // 2. Typing on an empty line: Prepend author name tag automatically before character
+      const currentLineText = model.getLineContent(pos.lineNumber);
+      const isNavOrControlKey =
+        e.ctrlKey ||
+        e.metaKey ||
+        e.altKey ||
+        e.keyCode === monaco.KeyCode.Backspace ||
+        e.keyCode === monaco.KeyCode.Delete ||
+        e.keyCode === monaco.KeyCode.Tab ||
+        e.keyCode === monaco.KeyCode.Escape ||
+        e.keyCode === monaco.KeyCode.UpArrow ||
+        e.keyCode === monaco.KeyCode.DownArrow ||
+        e.keyCode === monaco.KeyCode.LeftArrow ||
+        e.keyCode === monaco.KeyCode.RightArrow;
+
+      if (currentLineText.trim() === "" && !isNavOrControlKey) {
+        if (!currentLineText.includes(`[${currentUserName}]`)) {
+          editor.executeEdits("auto-tag-start", [
+            {
+              range: new monaco.Range(pos.lineNumber, 1, pos.lineNumber, pos.column),
+              text: tag,
+              forceMoveMarkers: true,
+            },
+          ]);
+          editor.setPosition({ lineNumber: pos.lineNumber, column: tag.length + 1 });
+        }
+      }
+    });
+
+    // Add keyboard shortcut Alt+N to manually insert name tag
     editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.KeyN, () => {
       insertNameTag();
     });
@@ -647,6 +730,29 @@ export default function NotepadRoomPage() {
             <span className="hidden md:inline">Tag Line as</span>
             <span className="font-semibold text-orange-300">{userName}</span>
             <span className="text-[10px] text-gray-500 hidden lg:inline font-mono">Alt+N</span>
+          </button>
+
+          {/* Auto-Tag Line Toggle */}
+          <button
+            onClick={() => {
+              const next = !autoTagLine;
+              setAutoTagLine(next);
+              localStorage.setItem("anil6_auto_tag", String(next));
+            }}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border transition-colors cursor-pointer ${
+              autoTagLine
+                ? "bg-emerald-950/30 border-emerald-500/50 text-emerald-300 font-medium"
+                : "bg-[#25252b] border-[#383842] text-gray-400 hover:text-gray-200"
+            }`}
+            title="Automatically prefix your name whenever you start typing on a new line"
+          >
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                autoTagLine ? "bg-emerald-400 animate-pulse" : "bg-gray-500"
+              }`}
+            />
+            <span className="hidden sm:inline">Auto-Tag:</span>
+            <span className="font-semibold">{autoTagLine ? "ON" : "OFF"}</span>
           </button>
 
           {/* Language Selector Dropdown */}
