@@ -26,6 +26,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { GoogleAuthModal, UserProfile } from "@/components/auth/GoogleAuthModal";
+import { GoogleOneTap } from "@/components/auth/GoogleOneTap";
 
 const LANGUAGES = [
   { id: "plaintext", name: "Plain Text", ext: ".txt" },
@@ -720,6 +721,12 @@ export default function NotepadRoomPage() {
       <GoogleAuthModal
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
+        currentUserProfile={userProfile}
+        onProfileUpdate={handleProfileUpdate}
+      />
+
+      {/* Automatic Google One-Tap Popup on Page Load */}
+      <GoogleOneTap
         currentUserProfile={userProfile}
         onProfileUpdate={handleProfileUpdate}
       />
