@@ -49,10 +49,10 @@ export function MandatoryAuthGate({ roomId, onAuthenticate }: MandatoryAuthGateP
   // Step 1: Request 6-digit OTP
   const handleSendCode = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanTarget = target.trim();
+    const cleanTarget = target.trim().toLowerCase();
 
-    if (!cleanTarget || cleanTarget.length < 3) {
-      setError("Please enter a valid Gmail address or mobile number");
+    if (!cleanTarget || !cleanTarget.includes("@") || !cleanTarget.includes(".")) {
+      setError("Please enter a valid Gmail / Email address (e.g. yourname@gmail.com)");
       return;
     }
 
@@ -69,10 +69,10 @@ export function MandatoryAuthGate({ roomId, onAuthenticate }: MandatoryAuthGateP
       const data = await res.json();
       if (res.ok && data.success) {
         setStep("verify");
-        setPreviewCode(data.previewCode || null);
+        setPreviewCode(null);
         setDeliveryInfo({
           delivered: Boolean(data.delivered),
-          method: data.method || "demo_preview",
+          method: data.method || "smtp",
           message: data.message || "",
         });
         setResendCooldown(30);
@@ -104,7 +104,7 @@ export function MandatoryAuthGate({ roomId, onAuthenticate }: MandatoryAuthGateP
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          target: target.trim(),
+          target: target.trim().toLowerCase(),
           code: cleanCode,
           name: name.trim() || undefined,
           roomId,
@@ -116,7 +116,7 @@ export function MandatoryAuthGate({ roomId, onAuthenticate }: MandatoryAuthGateP
         localStorage.setItem("anil_user_profile", JSON.stringify(data.profile));
         onAuthenticate(data.profile);
       } else {
-        setError(data.error || "Invalid verification code. Please check and try again.");
+        setError(data.error || "Invalid verification code. Please check your Gmail and try again.");
       }
     } catch {
       setError("Network error. Could not verify code.");
@@ -157,7 +157,7 @@ export function MandatoryAuthGate({ roomId, onAuthenticate }: MandatoryAuthGateP
           <p className="text-xs text-gray-400 mt-1">
             {step === "input" ? (
               <>
-                Gmail / Mobile verification is{" "}
+                Gmail verification is{" "}
                 <strong className="text-orange-400 font-semibold">compulsory</strong> to unlock room{" "}
                 <span className="font-mono text-white font-bold">/{roomId}</span>
               </>
@@ -171,35 +171,32 @@ export function MandatoryAuthGate({ roomId, onAuthenticate }: MandatoryAuthGateP
         </div>
 
         {step === "input" ? (
-          /* STEP 1: Enter Gmail or Mobile Number */
+          /* STEP 1: Enter Gmail Address */
           <form onSubmit={handleSendCode} className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-                Gmail Address or Mobile Number <span className="text-orange-500">*</span>
+                Gmail / Email Address <span className="text-orange-500">*</span>
               </label>
               <div className="relative">
                 <input
-                  type="text"
+                  type="email"
                   value={target}
                   onChange={(e) => {
                     setTarget(e.target.value);
                     if (error) setError(null);
                   }}
-                  placeholder="e.g. yourname@gmail.com or 9876543210"
+                  placeholder="e.g. yourname@gmail.com"
                   required
                   autoFocus
                   className="w-full rounded-xl bg-[#222228] border border-[#34343e] pl-10 pr-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500 transition-colors font-mono"
                 />
                 <div className="absolute left-3.5 top-3.5 text-gray-500">
-                  {target.includes("@") ? (
-                    <Mail className="h-4 w-4 text-orange-400" />
-                  ) : target.match(/\d/) ? (
-                    <Phone className="h-4 w-4 text-orange-400" />
-                  ) : (
-                    <Mail className="h-4 w-4 text-gray-400" />
-                  )}
+                  <Mail className="h-4 w-4 text-orange-400" />
                 </div>
               </div>
+              <p className="text-[11px] text-gray-500 mt-1.5">
+                A 6-digit verification code will be sent to this email.
+              </p>
             </div>
 
             <div>
@@ -318,7 +315,7 @@ export function MandatoryAuthGate({ roomId, onAuthenticate }: MandatoryAuthGateP
                   className="text-xs text-gray-400 hover:text-white transition-colors cursor-pointer inline-flex items-center gap-1"
                 >
                   <ArrowLeft className="h-3 w-3" />
-                  <span>Change Gmail/Phone</span>
+                  <span>Change Email</span>
                 </button>
 
                 <button

@@ -1,7 +1,8 @@
-// Global In-Memory OTP Store and Multi-Provider Dispatch Service (Email & Mobile SMS)
+// Global In-Memory OTP Store and Email Dispatch Service
+// Sends verification codes to any valid Gmail / Email address worldwide
 
 export interface OtpRecord {
-  target: string; // Email or Mobile Number
+  target: string; // Email address
   code: string;
   createdAt: number;
   expiresAt: number;
@@ -12,9 +13,8 @@ export interface OtpRecord {
 export interface SendResult {
   success: boolean;
   delivered: boolean;
-  method: "resend" | "twilio_verify" | "fast2sms" | "twilio_sms" | "demo_preview";
+  method: "smtp" | "resend" | "brevo";
   message: string;
-  previewCode?: string;
   error?: string;
 }
 
@@ -55,76 +55,31 @@ export async function verifyOtp(target: string, inputCode: string): Promise<{ su
   const store = getOtpStore();
   const normalized = target.trim().toLowerCase();
   const cleanCode = inputCode.trim();
-  const isEmail = normalized.includes("@");
 
-  // 1. Check in-memory store (used by Email & fallback SMS)
   const record = store.get(normalized);
-  if (record) {
-    if (Date.now() > record.expiresAt) {
-      store.delete(normalized);
-      return { success: false, error: "Verification code has expired. Please request a new one." };
-    }
-
-    if (record.attempts >= 5) {
-      store.delete(normalized);
-      return { success: false, error: "Too many failed attempts. Please request a new code." };
-    }
-
-    record.attempts += 1;
-
-    if (record.code === cleanCode) {
-      record.verified = true;
-      store.delete(normalized);
-      return { success: true };
-    }
+  if (!record) {
+    return { success: false, error: "No pending verification code found. Please request a new code." };
   }
 
-  // 2. If mobile number, also check Twilio Verify API
-  if (!isEmail) {
-    const twilioSid = process.env.TWILIO_ACCOUNT_SID;
-    const twilioToken = process.env.TWILIO_AUTH_TOKEN;
-    const verifySid = process.env.TWILIO_VERIFY_SERVICE_SID || "VA0a94d171c4c370da0f6ee06b43bfdf02";
-
-    if (twilioSid && twilioToken && verifySid) {
-      try {
-        const formattedNumber = normalized.startsWith("+")
-          ? normalized
-          : `+91${normalized.replace(/\D/g, "").slice(-10)}`;
-
-        const url = `https://verify.twilio.com/v2/Services/${verifySid}/VerificationCheck`;
-        const auth = Buffer.from(`${twilioSid}:${twilioToken}`).toString("base64");
-
-        const res = await fetch(url, {
-          method: "POST",
-          headers: {
-            Authorization: `Basic ${auth}`,
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
-          body: new URLSearchParams({
-            To: formattedNumber,
-            Code: cleanCode,
-          }).toString(),
-        });
-
-        const resData = await res.json();
-        console.log("[OTP Service] Twilio VerificationCheck response:", resData);
-
-        if (res.ok && (resData.status === "approved" || resData.valid === true)) {
-          if (record) store.delete(normalized);
-          return { success: true };
-        } else {
-          return {
-            success: false,
-            error: resData.message || "Invalid verification code. Please check your SMS.",
-          };
-        }
-      } catch (err: any) {
-        console.error("Twilio Verify Check error:", err.message);
-      }
-    }
+  if (Date.now() > record.expiresAt) {
+    store.delete(normalized);
+    return { success: false, error: "Verification code has expired. Please request a new one." };
   }
 
-  return { success: false, error: "Incorrect verification code. Please check and try again." };
+  if (record.attempts >= 5) {
+    store.delete(normalized);
+    return { success: false, error: "Too many failed attempts. Please request a new code." };
+  }
+
+  record.attempts += 1;
+
+  if (record.code === cleanCode) {
+    record.verified = true;
+    store.delete(normalized);
+    return { success: true };
+  }
+
+  return { success: false, error: "Incorrect verification code. Please check your Gmail inbox and try again." };
 }
 
 export async function sendVerificationCode(
@@ -133,172 +88,206 @@ export async function sendVerificationCode(
   roomId: string = "6"
 ): Promise<SendResult> {
   const cleanTarget = target.trim().toLowerCase();
-  const isEmail = cleanTarget.includes("@");
 
-  // ==========================================
-  // 1. GMAIL / EMAIL DELIVERY FLOW
-  // ==========================================
-  if (isEmail) {
-    const resendApiKey = process.env.RESEND_API_KEY;
-    if (resendApiKey && resendApiKey.trim().length > 0) {
-      try {
-        const fromEmail =
-          process.env.RESEND_FROM_EMAIL?.trim() || "onboarding@resend.dev";
-        const res = await fetch("https://api.resend.com/emails", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${resendApiKey.trim()}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            from: `Anil6 <${fromEmail}>`,
-            to: cleanTarget,
-            subject: `Your Anil6 Verification Code: ${code}`,
-            html: `
-              <div style="font-family: Arial, sans-serif; padding: 24px; background: #121214; color: #ffffff; border-radius: 12px; max-width: 480px; margin: auto;">
-                <div style="text-align: center; margin-bottom: 20px;">
-                  <span style="font-size: 24px; font-weight: 900; background: #ea580c; color: #ffffff; padding: 8px 16px; border-radius: 8px;">AM</span>
-                  <h2 style="color: #ffffff; margin-top: 12px;">Anil6 Verification Code</h2>
+  // 1. PRIMARY: GMAIL / SMTP via Nodemailer
+  // Works for ALL email addresses worldwide without domain verification
+  const gmailUser = process.env.GMAIL_USER?.trim();
+  const gmailAppPass = process.env.GMAIL_APP_PASSWORD?.trim();
+  const smtpHost = process.env.SMTP_HOST?.trim();
+  const smtpUser = process.env.SMTP_USER?.trim() || gmailUser;
+  const smtpPass = process.env.SMTP_PASS?.trim() || gmailAppPass;
+
+  if ((gmailUser && gmailAppPass) || (smtpHost && smtpUser && smtpPass)) {
+    try {
+      // @ts-ignore
+      const nodemailer = await import("nodemailer");
+      const transportConfig: any = gmailUser
+        ? {
+            service: "gmail",
+            auth: {
+              user: gmailUser,
+              pass: gmailAppPass,
+            },
+          }
+        : {
+            host: smtpHost,
+            port: parseInt(process.env.SMTP_PORT || "587"),
+            secure: process.env.SMTP_SECURE === "true",
+            auth: {
+              user: smtpUser,
+              pass: smtpPass,
+            },
+          };
+
+      const transporter = nodemailer.createTransport(transportConfig);
+      await transporter.sendMail({
+        from: `"AM Code" <${smtpUser}>`,
+        to: cleanTarget,
+        subject: `Your AM Code Verification: ${code}`,
+        html: `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 32px 20px; background: #0f0f12; color: #f3f4f6; border-radius: 16px; max-width: 480px; margin: 0 auto; border: 1px solid #27272a;">
+            <div style="text-align: center; margin-bottom: 24px;">
+              <div style="display: inline-block; background: linear-gradient(135deg, #ea580c, #f59e0b); color: #ffffff; font-weight: 900; font-size: 22px; padding: 10px 20px; border-radius: 12px; letter-spacing: 2px;">
+                AM
+              </div>
+              <h2 style="color: #ffffff; font-size: 20px; font-weight: 800; margin-top: 16px; margin-bottom: 4px;">Verification Code</h2>
+              <p style="color: #9ca3af; font-size: 13px; margin: 0;">Multiplayer Code & Notes Workspace</p>
+            </div>
+
+            <div style="background: #18181b; border: 1px solid #27272a; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px;">
+              <p style="font-size: 13px; color: #a1a1aa; margin: 0 0 12px 0;">Your one-time 6-digit verification code is:</p>
+              <div style="font-family: 'Courier New', monospace; font-size: 36px; font-weight: 800; letter-spacing: 8px; color: #fb923c; background: #27272a; padding: 14px 20px; border-radius: 8px; display: inline-block;">
+                ${code}
+              </div>
+              <p style="font-size: 12px; color: #71717a; margin: 12px 0 0 0;">Valid for 10 minutes for room /${roomId || "6"}</p>
+            </div>
+
+            <p style="font-size: 12px; color: #71717a; text-align: center; line-height: 1.5; margin: 0;">
+              If you did not request this verification code, you can safely ignore this email.
+            </p>
+          </div>
+        `,
+      });
+
+      console.log(`[OTP Service] Nodemailer sent OTP successfully to ${cleanTarget}`);
+      return {
+        success: true,
+        delivered: true,
+        method: "smtp",
+        message: `Verification code sent to ${cleanTarget}! Check your inbox or spam folder.`,
+      };
+    } catch (smtpErr: any) {
+      console.error("[OTP Service] Gmail SMTP error:", smtpErr.message);
+    }
+  }
+
+  // 2. BREVO (Sendinblue) API - 100% Free 300 emails/day to ANY recipient, no domain needed!
+  const brevoApiKey = process.env.BREVO_API_KEY?.trim();
+  if (brevoApiKey && brevoApiKey.length > 0) {
+    try {
+      const senderEmail = process.env.BREVO_SENDER_EMAIL?.trim() || "chimaladinneanil6@gmail.com";
+      const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+        method: "POST",
+        headers: {
+          "api-key": brevoApiKey,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          sender: { name: "AM Code", email: senderEmail },
+          to: [{ email: cleanTarget }],
+          subject: `Your AM Code Verification: ${code}`,
+          htmlContent: `
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 32px 20px; background: #0f0f12; color: #f3f4f6; border-radius: 16px; max-width: 480px; margin: 0 auto; border: 1px solid #27272a;">
+              <div style="text-align: center; margin-bottom: 24px;">
+                <div style="display: inline-block; background: linear-gradient(135deg, #ea580c, #f59e0b); color: #ffffff; font-weight: 900; font-size: 22px; padding: 10px 20px; border-radius: 12px; letter-spacing: 2px;">
+                  AM
                 </div>
-                <p style="font-size: 14px; color: #9ca3af;">Use the 6-digit code below to unlock room /${roomId || "6"}:</p>
-                <div style="background: #1f2937; padding: 18px; text-align: center; border-radius: 8px; font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #fb923c; margin: 20px 0;">
+                <h2 style="color: #ffffff; font-size: 20px; font-weight: 800; margin-top: 16px; margin-bottom: 4px;">Verification Code</h2>
+                <p style="color: #9ca3af; font-size: 13px; margin: 0;">Multiplayer Code & Notes Workspace</p>
+              </div>
+
+              <div style="background: #18181b; border: 1px solid #27272a; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px;">
+                <p style="font-size: 13px; color: #a1a1aa; margin: 0 0 12px 0;">Your one-time 6-digit verification code is:</p>
+                <div style="font-family: 'Courier New', monospace; font-size: 36px; font-weight: 800; letter-spacing: 8px; color: #fb923c; background: #27272a; padding: 14px 20px; border-radius: 8px; display: inline-block;">
                   ${code}
                 </div>
-                <p style="font-size: 12px; color: #6b7280; text-align: center;">Expires in 10 minutes.</p>
+                <p style="font-size: 12px; color: #71717a; margin: 12px 0 0 0;">Valid for 10 minutes for room /${roomId || "6"}</p>
               </div>
-            `,
-          }),
-        });
 
-        const resData = await res.json();
-        if (res.ok && resData.id) {
-          return {
-            success: true,
-            delivered: true,
-            method: "resend",
-            message: `Verification code sent to ${cleanTarget} via email!`,
-          };
-        } else {
-          const detail = resData.message || resData.error || "Email delivery failed";
-          return {
-            success: false,
-            delivered: false,
-            method: "resend",
-            error: `Resend Notice: ${detail}`,
-            message: `Notice: ${detail}`,
-          };
-        }
-      } catch (err: any) {
-        console.error("Resend error:", err.message);
+              <p style="font-size: 12px; color: #71717a; text-align: center; line-height: 1.5; margin: 0;">
+                If you did not request this verification code, you can safely ignore this email.
+              </p>
+            </div>
+          `,
+        }),
+      });
+
+      const resData = await res.json();
+      if (res.ok && (resData.messageId || resData.id)) {
+        return {
+          success: true,
+          delivered: true,
+          method: "brevo",
+          message: `Verification code sent to ${cleanTarget} via Brevo! Check your inbox or spam.`,
+        };
+      } else {
+        console.warn("[OTP Service] Brevo dispatch warning:", resData);
       }
+    } catch (err: any) {
+      console.error("[OTP Service] Brevo dispatch error:", err.message);
     }
   }
 
-  // ==========================================
-  // 2. MOBILE SMS DELIVERY FLOW
-  // ==========================================
-  if (!isEmail) {
-    // 2A. TWILIO VERIFY SERVICE (Works directly with all Indian mobile numbers)
-    const twilioSid = process.env.TWILIO_ACCOUNT_SID;
-    const twilioToken = process.env.TWILIO_AUTH_TOKEN;
-    const verifySid = process.env.TWILIO_VERIFY_SERVICE_SID || "VA0a94d171c4c370da0f6ee06b43bfdf02";
+  // 3. TERTIARY: RESEND API
+  const resendApiKey = process.env.RESEND_API_KEY;
+  if (resendApiKey && resendApiKey.trim().length > 0) {
+    try {
+      const fromEmail = process.env.RESEND_FROM_EMAIL?.trim() || "onboarding@resend.dev";
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${resendApiKey.trim()}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: `AM Code <${fromEmail}>`,
+          to: cleanTarget,
+          subject: `Your AM Code Verification: ${code}`,
+          html: `
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 32px 20px; background: #0f0f12; color: #f3f4f6; border-radius: 16px; max-width: 480px; margin: 0 auto; border: 1px solid #27272a;">
+              <div style="text-align: center; margin-bottom: 24px;">
+                <div style="display: inline-block; background: linear-gradient(135deg, #ea580c, #f59e0b); color: #ffffff; font-weight: 900; font-size: 22px; padding: 10px 20px; border-radius: 12px; letter-spacing: 2px;">
+                  AM
+                </div>
+                <h2 style="color: #ffffff; font-size: 20px; font-weight: 800; margin-top: 16px; margin-bottom: 4px;">Verification Code</h2>
+                <p style="color: #9ca3af; font-size: 13px; margin: 0;">Multiplayer Code & Notes Workspace</p>
+              </div>
 
-    if (twilioSid && twilioToken && verifySid) {
-      try {
-        const formattedNumber = cleanTarget.startsWith("+")
-          ? cleanTarget
-          : `+91${cleanTarget.replace(/\D/g, "").slice(-10)}`;
+              <div style="background: #18181b; border: 1px solid #27272a; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px;">
+                <p style="font-size: 13px; color: #a1a1aa; margin: 0 0 12px 0;">Your one-time 6-digit verification code is:</p>
+                <div style="font-family: 'Courier New', monospace; font-size: 36px; font-weight: 800; letter-spacing: 8px; color: #fb923c; background: #27272a; padding: 14px 20px; border-radius: 8px; display: inline-block;">
+                  ${code}
+                </div>
+                <p style="font-size: 12px; color: #71717a; margin: 12px 0 0 0;">Valid for 10 minutes for room /${roomId || "6"}</p>
+              </div>
 
-        const url = `https://verify.twilio.com/v2/Services/${verifySid}/Verifications`;
-        const auth = Buffer.from(`${twilioSid}:${twilioToken}`).toString("base64");
+              <p style="font-size: 12px; color: #71717a; text-align: center; line-height: 1.5; margin: 0;">
+                If you did not request this verification code, you can safely ignore this email.
+              </p>
+            </div>
+          `,
+        }),
+      });
 
-        const res = await fetch(url, {
-          method: "POST",
-          headers: {
-            Authorization: `Basic ${auth}`,
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
-          body: new URLSearchParams({
-            To: formattedNumber,
-            Channel: "sms",
-          }).toString(),
-        });
-
-        const resData = await res.json();
-        console.log("[OTP Service] Twilio Verify dispatch response:", resData);
-
-        if (res.ok && (resData.status === "pending" || resData.sid)) {
-          return {
-            success: true,
-            delivered: true,
-            method: "twilio_verify",
-            message: `SMS dispatched to ${cleanTarget}! Check your mobile SMS messages.`,
-          };
-        } else {
-          const detail = resData.message || "Twilio SMS dispatch failed";
-          return {
-            success: false,
-            delivered: false,
-            method: "twilio_verify",
-            error: `SMS Error: ${detail}`,
-            message: `SMS Error: ${detail}`,
-          };
-        }
-      } catch (twilioErr: any) {
-        console.error("Twilio Verify error:", twilioErr.message);
+      const resData = await res.json();
+      if (res.ok && resData.id) {
+        return {
+          success: true,
+          delivered: true,
+          method: "resend",
+          message: `Verification code sent to ${cleanTarget} via email!`,
+        };
+      } else {
+        const detail = resData.message || resData.error || "Email delivery failed";
+        return {
+          success: false,
+          delivered: false,
+          method: "resend",
+          error: `Resend Notice: ${detail}`,
+          message: `Notice: ${detail}`,
+        };
       }
+    } catch (err: any) {
+      console.error("Resend error:", err.message);
     }
-
-    // 2B. FAST2SMS FALLBACK
-    const fast2smsKey = process.env.FAST2SMS_API_KEY;
-    if (fast2smsKey && fast2smsKey.trim().length > 0) {
-      try {
-        const rawDigits = cleanTarget.replace(/\D/g, "");
-        const mobile10 = rawDigits.length > 10 ? rawDigits.slice(-10) : rawDigits;
-
-        const res = await fetch("https://www.fast2sms.com/dev/bulkV2", {
-          method: "POST",
-          headers: {
-            authorization: fast2smsKey.trim(),
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            route: "otp",
-            variables_values: code,
-            numbers: mobile10,
-          }),
-        });
-
-        const resData = await res.json();
-        if (res.ok && (resData.return === true || resData.status_code === 200)) {
-          return {
-            success: true,
-            delivered: true,
-            method: "fast2sms",
-            message: `SMS dispatched to ${cleanTarget}! Check your mobile messages.`,
-          };
-        }
-      } catch (smsErr: any) {
-        console.error("Fast2SMS error:", smsErr.message);
-      }
-    }
-
-    // If no SMS provider succeeded
-    return {
-      success: false,
-      delivered: false,
-      method: "twilio_verify",
-      error: "Could not send SMS to this mobile number. Please try Gmail verification.",
-      message: "No active SMS provider configured.",
-    };
   }
 
-  // Fallback for email
   return {
     success: false,
     delivered: false,
-    method: "resend",
-    error: "Failed to send email verification code. Please check your Gmail address.",
+    method: "smtp",
+    error: "Failed to send email verification code. Please configure Gmail SMTP or Brevo API in .env.local",
     message: "Email sending failed.",
   };
 }

@@ -6,9 +6,9 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { target, roomId } = body;
 
-    if (!target || typeof target !== "string" || target.trim().length < 3) {
+    if (!target || typeof target !== "string" || !target.includes("@") || !target.includes(".")) {
       return NextResponse.json(
-        { error: "Please enter a valid Gmail address or mobile number." },
+        { error: "Please enter a valid Gmail / Email address (e.g. yourname@gmail.com)." },
         { status: 400 }
       );
     }
@@ -16,12 +16,12 @@ export async function POST(req: NextRequest) {
     const cleanTarget = target.trim().toLowerCase();
     const { code, expiresAt } = generateOtp(cleanTarget);
 
-    // Dispatch OTP via configured email/SMS service
+    // Dispatch OTP via configured Gmail SMTP / Resend
     const sendResult = await sendVerificationCode(cleanTarget, code, roomId || "6");
 
     if (!sendResult.success) {
       return NextResponse.json(
-        { error: sendResult.error || "Failed to dispatch verification code. Please check your address or mobile number." },
+        { error: sendResult.error || "Failed to dispatch verification code to this email address." },
         { status: 400 }
       );
     }
