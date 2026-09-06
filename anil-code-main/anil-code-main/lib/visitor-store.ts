@@ -12,6 +12,9 @@ export interface VisitorLog {
   screenSize?: string;
   language?: string;
   timezone?: string;
+  email?: string;
+  name?: string;
+  avatar?: string;
   timestamp: number;
 }
 
@@ -39,12 +42,23 @@ export function addVisitorLog(log: Omit<VisitorLog, "id" | "timestamp">): Visito
     timestamp: Date.now(),
   };
 
+  // If this IP or session already logged without email, and now has email, update it
+  if (log.email) {
+    const existing = logs.find((l) => l.ip === newLog.ip && (!l.email || l.email === log.email));
+    if (existing) {
+      existing.email = log.email;
+      existing.name = log.name || existing.name;
+      existing.avatar = log.avatar || existing.avatar;
+    }
+  }
+
   // Prevent duplicate spam within 10 seconds from same IP and path
   const isRecentDuplicate = logs.some(
     (l) =>
       l.ip === newLog.ip &&
       l.page === newLog.page &&
-      newLog.timestamp - l.timestamp < 10000
+      newLog.timestamp - l.timestamp < 10000 &&
+      l.email === newLog.email
   );
 
   if (!isRecentDuplicate) {
@@ -64,6 +78,7 @@ export function clearVisitorLogs(): void {
 export function getVisitorStats(logs: VisitorLog[]) {
   const uniqueIPs = new Set(logs.map((l) => l.ip)).size;
   const totalVisits = logs.length;
+  const usersWithEmail = logs.filter((l) => Boolean(l.email)).length;
 
   const countries: Record<string, number> = {};
   const devices: Record<string, number> = { Desktop: 0, Mobile: 0, Tablet: 0, Unknown: 0 };
@@ -88,6 +103,7 @@ export function getVisitorStats(logs: VisitorLog[]) {
   return {
     totalVisits,
     uniqueIPs,
+    usersWithEmail,
     countries,
     devices,
     browsers,

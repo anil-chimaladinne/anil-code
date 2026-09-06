@@ -22,6 +22,10 @@ import {
   Copy,
   Check,
   Filter,
+  Mail,
+  User,
+  UserCheck,
+  Sparkles,
 } from "lucide-react";
 import { VisitorLog } from "@/lib/visitor-store";
 
@@ -34,6 +38,7 @@ export default function AdminPage() {
   const [stats, setStats] = useState<any>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [pageFilter, setPageFilter] = useState("ALL");
+  const [onlyWithEmail, setOnlyWithEmail] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [copiedIp, setCopiedIp] = useState<string | null>(null);
 
@@ -83,7 +88,7 @@ export default function AdminPage() {
     if (!autoRefresh) return;
     const interval = setInterval(() => {
       fetchLogs(token);
-    }, 5000);
+    }, 4000);
 
     return () => clearInterval(interval);
   }, [token, autoRefresh, fetchLogs]);
@@ -151,6 +156,8 @@ export default function AdminPage() {
     const headers = [
       "Timestamp",
       "Date",
+      "Email",
+      "Name",
       "IP",
       "Country",
       "City",
@@ -167,6 +174,8 @@ export default function AdminPage() {
     const rows = logs.map((l) => [
       l.timestamp,
       new Date(l.timestamp).toISOString(),
+      `"${l.email || ""}"`,
+      `"${l.name || ""}"`,
       `"${l.ip}"`,
       `"${l.country}"`,
       `"${l.city}"`,
@@ -216,11 +225,14 @@ export default function AdminPage() {
 
   const filteredLogs = useMemo(() => {
     return logs.filter((log) => {
+      if (onlyWithEmail && !log.email) return false;
       if (pageFilter !== "ALL" && log.page !== pageFilter) return false;
       if (!searchQuery.trim()) return true;
 
       const q = searchQuery.toLowerCase();
       return (
+        (log.email && log.email.toLowerCase().includes(q)) ||
+        (log.name && log.name.toLowerCase().includes(q)) ||
         log.ip.toLowerCase().includes(q) ||
         log.country.toLowerCase().includes(q) ||
         log.city.toLowerCase().includes(q) ||
@@ -230,10 +242,14 @@ export default function AdminPage() {
         log.device.toLowerCase().includes(q)
       );
     });
-  }, [logs, searchQuery, pageFilter]);
+  }, [logs, searchQuery, pageFilter, onlyWithEmail]);
 
   const uniquePages = useMemo(() => {
     return Array.from(new Set(logs.map((l) => l.page))).filter(Boolean);
+  }, [logs]);
+
+  const emailCount = useMemo(() => {
+    return logs.filter((l) => Boolean(l.email)).length;
   }, [logs]);
 
   // LOGIN SCREEN
@@ -249,10 +265,10 @@ export default function AdminPage() {
               AM
             </div>
             <h1 className="text-xl font-bold text-white tracking-tight">
-              Anil<span className="text-orange-500 font-extrabold">6</span> Visitor Analytics
+              Anil<span className="text-orange-500 font-extrabold">6</span> Visitor & User Admin
             </h1>
             <p className="text-xs text-gray-400 mt-1">
-              Enter your passcode to access real-time visitor details
+              Enter admin passcode to view real-time visitor Gmails & analytics
             </p>
           </div>
 
@@ -355,13 +371,13 @@ export default function AdminPage() {
                 ? "bg-emerald-950/40 border-emerald-800/50 text-emerald-300"
                 : "bg-[#242429] border-[#363640] text-gray-400"
             }`}
-            title="Toggle 5-second auto refresh"
+            title="Toggle 4-second auto refresh"
           >
             <RefreshCw
               className={`h-3.5 w-3.5 ${autoRefresh && isLoading ? "animate-spin" : ""}`}
             />
             <span className="hidden sm:inline">
-              {autoRefresh ? "Auto (5s)" : "Paused"}
+              {autoRefresh ? "Auto (4s)" : "Paused"}
             </span>
           </button>
 
@@ -423,10 +439,24 @@ export default function AdminPage() {
             <div className="text-2xl font-bold text-white tracking-tight">
               {stats?.totalVisits ?? logs.length}
             </div>
-            <p className="text-[11px] text-gray-500 mt-1">Recorded page sessions</p>
+            <p className="text-[11px] text-gray-500 mt-1">Total visitor sessions</p>
           </div>
 
-          {/* Card 2: Unique Visitors */}
+          {/* Card 2: Gmail Verified Users */}
+          <div className="bg-[#18181c] border border-[#2a2a32] rounded-xl p-4.5 shadow-sm">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-medium text-gray-400">Gmails Captured</span>
+              <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
+                <UserCheck className="h-4 w-4" />
+              </div>
+            </div>
+            <div className="text-2xl font-bold text-emerald-400 tracking-tight">
+              {emailCount}
+            </div>
+            <p className="text-[11px] text-gray-500 mt-1">Identified with Google / Gmail</p>
+          </div>
+
+          {/* Card 3: Unique Visitors */}
           <div className="bg-[#18181c] border border-[#2a2a32] rounded-xl p-4.5 shadow-sm">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-medium text-gray-400">Unique IPs</span>
@@ -440,11 +470,11 @@ export default function AdminPage() {
             <p className="text-[11px] text-gray-500 mt-1">Distinct IP addresses</p>
           </div>
 
-          {/* Card 3: Top Country */}
+          {/* Card 4: Top Locations */}
           <div className="bg-[#18181c] border border-[#2a2a32] rounded-xl p-4.5 shadow-sm">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-medium text-gray-400">Top Locations</span>
-              <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
+              <span className="text-xs font-medium text-gray-400">Top Location</span>
+              <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400">
                 <Globe className="h-4 w-4" />
               </div>
             </div>
@@ -455,26 +485,8 @@ export default function AdminPage() {
             </div>
             <p className="text-[11px] text-gray-500 mt-1 truncate">
               {stats?.countries
-                ? `${Object.keys(stats.countries).length} countries active`
-                : "Locations detected"}
-            </p>
-          </div>
-
-          {/* Card 4: Device Split */}
-          <div className="bg-[#18181c] border border-[#2a2a32] rounded-xl p-4.5 shadow-sm">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-medium text-gray-400">Top Device</span>
-              <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400">
-                <Monitor className="h-4 w-4" />
-              </div>
-            </div>
-            <div className="text-2xl font-bold text-white tracking-tight">
-              {stats?.devices?.Desktop >= (stats?.devices?.Mobile || 0)
-                ? "Desktop"
-                : "Mobile"}
-            </div>
-            <p className="text-[11px] text-gray-500 mt-1">
-              🖥️ {stats?.devices?.Desktop || 0} &nbsp;|&nbsp; 📱 {stats?.devices?.Mobile || 0}
+                ? `${Object.keys(stats.countries).length} countries recorded`
+                : "Locations active"}
             </p>
           </div>
         </div>
@@ -487,25 +499,41 @@ export default function AdminPage() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by IP, country, city, room, OS, or browser..."
+              placeholder="Search by Gmail, Name, IP, country, city, room, OS, or browser..."
               className="w-full rounded-lg bg-[#222228] border border-[#34343e] pl-10 pr-4 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-orange-500 transition-colors"
             />
           </div>
 
-          <div className="flex items-center gap-2">
-            <Filter className="h-3.5 w-3.5 text-gray-500 ml-1" />
-            <select
-              value={pageFilter}
-              onChange={(e) => setPageFilter(e.target.value)}
-              className="rounded-lg bg-[#222228] border border-[#34343e] px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-orange-500 cursor-pointer"
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Filter by Gmail Only */}
+            <button
+              onClick={() => setOnlyWithEmail(!onlyWithEmail)}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
+                onlyWithEmail
+                  ? "bg-orange-500/20 border-orange-500/50 text-orange-300"
+                  : "bg-[#222228] border-[#34343e] text-gray-400 hover:text-gray-200"
+              }`}
             >
-              <option value="ALL">All Rooms ({logs.length})</option>
-              {uniquePages.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
+              <Mail className="h-3.5 w-3.5 text-orange-400" />
+              <span>Gmails Only ({emailCount})</span>
+            </button>
+
+            {/* Filter by Room */}
+            <div className="flex items-center gap-1.5 bg-[#222228] border border-[#34343e] rounded-lg px-2 py-1">
+              <Filter className="h-3.5 w-3.5 text-gray-500" />
+              <select
+                value={pageFilter}
+                onChange={(e) => setPageFilter(e.target.value)}
+                className="bg-transparent text-xs text-gray-200 focus:outline-none cursor-pointer py-1"
+              >
+                <option value="ALL" className="bg-[#18181c]">All Rooms ({logs.length})</option>
+                {uniquePages.map((p) => (
+                  <option key={p} value={p} className="bg-[#18181c]">
+                    {p}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
 
@@ -513,7 +541,7 @@ export default function AdminPage() {
         <div className="bg-[#18181c] border border-[#2a2a32] rounded-xl overflow-hidden shadow-sm">
           <div className="px-5 py-4 border-b border-[#2a2a32] flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <h2 className="font-semibold text-sm text-white">Live Visitor Log</h2>
+              <h2 className="font-semibold text-sm text-white">Live Visitor Details & Gmails</h2>
               <span className="text-xs px-2 py-0.5 rounded-full bg-gray-800 text-gray-400 font-mono">
                 {filteredLogs.length} shown
               </span>
@@ -532,9 +560,9 @@ export default function AdminPage() {
               </div>
               <h3 className="text-sm font-semibold text-gray-300">No visitors found</h3>
               <p className="text-xs text-gray-500 max-w-sm mx-auto mt-1">
-                {searchQuery || pageFilter !== "ALL"
+                {searchQuery || pageFilter !== "ALL" || onlyWithEmail
                   ? "Try adjusting your search or filters to see more results."
-                  : "Visitor activity will automatically appear here in real time as people open your website."}
+                  : "Visitor activity and Google profiles will automatically appear here in real time as people open your website."}
               </p>
             </div>
           ) : (
@@ -543,9 +571,10 @@ export default function AdminPage() {
                 <thead className="bg-[#1e1e24] text-gray-400 uppercase tracking-wider font-semibold border-b border-[#2a2a32] text-[10px]">
                   <tr>
                     <th className="px-4 py-3">Time</th>
+                    <th className="px-4 py-3">User & Gmail Details</th>
                     <th className="px-4 py-3">IP Address</th>
                     <th className="px-4 py-3">Location</th>
-                    <th className="px-4 py-3">Room / Page</th>
+                    <th className="px-4 py-3">Room</th>
                     <th className="px-4 py-3">Device & OS</th>
                     <th className="px-4 py-3">Browser</th>
                     <th className="px-4 py-3">Screen / TZ</th>
@@ -566,6 +595,43 @@ export default function AdminPage() {
                           <Clock className="h-3 w-3 text-gray-500" />
                           <span>{formatTimeAgo(log.timestamp)}</span>
                         </div>
+                      </td>
+
+                      {/* User & Gmail Details */}
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        {log.email ? (
+                          <div className="flex items-center gap-2.5">
+                            <div className="h-7 w-7 rounded-full bg-orange-600 border border-orange-400/50 flex items-center justify-center text-white font-bold text-xs overflow-hidden shrink-0 shadow-sm">
+                              {log.avatar ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={log.avatar}
+                                  alt={log.name || log.email}
+                                  className="h-full w-full object-cover"
+                                />
+                              ) : (
+                                (log.name || log.email).charAt(0).toUpperCase()
+                              )}
+                            </div>
+                            <div>
+                              <div className="font-semibold text-white flex items-center gap-1.5">
+                                <span>{log.name || log.email.split("@")[0]}</span>
+                                <span className="px-1.5 py-0.2 rounded bg-emerald-500/10 border border-emerald-500/20 text-[9px] text-emerald-400 font-medium">
+                                  Verified
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1 text-[11px] text-orange-400 font-mono">
+                                <Mail className="h-3 w-3 text-orange-400 shrink-0" />
+                                <span>{log.email}</span>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 text-gray-500 text-[11px]">
+                            <User className="h-4 w-4 shrink-0 text-gray-600" />
+                            <span>Anonymous Visitor</span>
+                          </div>
+                        )}
                       </td>
 
                       {/* IP Address */}

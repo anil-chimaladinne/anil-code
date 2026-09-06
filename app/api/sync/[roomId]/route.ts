@@ -11,6 +11,9 @@ export interface ActiveUserDetail {
   device: "Mobile" | "Tablet" | "Desktop" | "Unknown";
   joinedAt: number;
   lastSeen: number;
+  email?: string;
+  name?: string;
+  avatar?: string;
 }
 
 interface RoomData {
@@ -70,7 +73,12 @@ function parseUserAgent(ua: string) {
   return { browser, os, device };
 }
 
-function extractUserMetadata(req: NextRequest, userId: string, existing?: ActiveUserDetail): ActiveUserDetail {
+function extractUserMetadata(
+  req: NextRequest,
+  userId: string,
+  existing?: ActiveUserDetail,
+  extra?: { email?: string; name?: string; avatar?: string }
+): ActiveUserDetail {
   const headers = req.headers;
   const forwardedFor = headers.get("x-forwarded-for");
   const ip = forwardedFor
@@ -95,6 +103,9 @@ function extractUserMetadata(req: NextRequest, userId: string, existing?: Active
     device,
     joinedAt: existing ? existing.joinedAt : Date.now(),
     lastSeen: Date.now(),
+    email: extra?.email || existing?.email || undefined,
+    name: extra?.name || existing?.name || undefined,
+    avatar: extra?.avatar || existing?.avatar || undefined,
   };
 }
 
@@ -118,12 +129,19 @@ export async function GET(
 ) {
   const { roomId } = params;
   const userId = req.nextUrl.searchParams.get("userId") || "anon";
+  const userEmail = req.nextUrl.searchParams.get("email") || undefined;
+  const userName = req.nextUrl.searchParams.get("name") || undefined;
+  const userAvatar = req.nextUrl.searchParams.get("avatar") || undefined;
 
   const room = getOrInitRoom(roomId);
 
-  // Update or register user with full visitor metadata
+  // Update or register user with full visitor metadata & profile
   const existingUser = room.users.get(userId);
-  const updatedUser = extractUserMetadata(req, userId, existingUser);
+  const updatedUser = extractUserMetadata(req, userId, existingUser, {
+    email: userEmail,
+    name: userName,
+    avatar: userAvatar,
+  });
   room.users.set(userId, updatedUser);
 
   // Cleanup inactive users (older than 12 seconds)
@@ -155,13 +173,13 @@ export async function POST(
   try {
     const { roomId } = params;
     const body = await req.json();
-    const { code, language, userId } = body;
+    const { code, language, userId, email, name, avatar } = body;
 
     const room = getOrInitRoom(roomId);
 
     if (userId) {
       const existingUser = room.users.get(userId);
-      const updatedUser = extractUserMetadata(req, userId, existingUser);
+      const updatedUser = extractUserMetadata(req, userId, existingUser, { email, name, avatar });
       room.users.set(userId, updatedUser);
     }
 

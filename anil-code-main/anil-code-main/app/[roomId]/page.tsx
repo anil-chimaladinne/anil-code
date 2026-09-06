@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams } from "next/navigation";
-import Editor, { OnMount } from "@monaco-editor/react";
 import Link from "next/link";
+import Editor, { OnMount } from "@monaco-editor/react";
 import {
   Share2,
   Copy,
@@ -20,8 +20,12 @@ import {
   Tablet,
   ExternalLink,
   X,
+  Mail,
+  User,
   ShieldCheck,
+  Sparkles,
 } from "lucide-react";
+import { GoogleAuthModal, UserProfile } from "@/components/auth/GoogleAuthModal";
 
 const LANGUAGES = [
   { id: "plaintext", name: "Plain Text", ext: ".txt" },
@@ -47,17 +51,83 @@ export default function NotepadRoomPage() {
   const [usersCount, setUsersCount] = useState<number>(1);
   const [activeUsers, setActiveUsers] = useState<any[]>([]);
   const [isUsersModalOpen, setIsUsersModalOpen] = useState(false);
-  const [copiedIp, setCopiedIp] = useState<string | null>(null);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
   const [isLangOpen, setIsLangOpen] = useState(false);
-  const [isConnected, setIsConnected] = useState(true);
 
   const editorRef = useRef<any>(null);
   const isRemoteUpdate = useRef(false);
   const lastLocalVersion = useRef(0);
   const userId = useRef(`user_${Math.random().toString(36).substring(2, 9)}`);
   const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
+
+  // Load user profile from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("anil_user_profile");
+      if (saved) {
+        setUserProfile(JSON.parse(saved));
+      }
+    } catch {}
+  }, []);
+
+  // Send visitor tracking log with profile
+  const trackVisitor = useCallback(
+    (profile?: UserProfile | null) => {
+      try {
+        const payload = {
+          page: `/${roomId}`,
+          referrer: typeof document !== "undefined" ? document.referrer : "",
+          screenSize:
+            typeof window !== "undefined"
+              ? `${window.screen.width}x${window.screen.height}`
+              : undefined,
+          timezone:
+            typeof Intl !== "undefined"
+              ? Intl.DateTimeFormat().resolvedOptions().timeZone
+              : undefined,
+          language: typeof navigator !== "undefined" ? navigator.language : undefined,
+          email: profile?.email || userProfile?.email || undefined,
+          name: profile?.name || userProfile?.name || undefined,
+          avatar: profile?.avatar || userProfile?.avatar || undefined,
+        };
+
+        fetch("/api/track", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }).catch(() => {});
+      } catch {}
+    },
+    [roomId, userProfile]
+  );
+
+  useEffect(() => {
+    trackVisitor(userProfile);
+  }, [roomId, userProfile, trackVisitor]);
+
+  // Handle profile update
+  const handleProfileUpdate = (profile: UserProfile | null) => {
+    setUserProfile(profile);
+    trackVisitor(profile);
+
+    // Sync profile immediately to room
+    const p = profile
+      ? `&email=${encodeURIComponent(profile.email)}&name=${encodeURIComponent(
+          profile.name
+        )}&avatar=${encodeURIComponent(profile.avatar || "")}`
+      : "";
+
+    fetch(`/api/sync/${roomId}?userId=${userId.current}${p}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.activeUsers) setActiveUsers(data.activeUsers);
+      })
+      .catch(() => {});
+  };
 
   // Initialize Serverless Real-Time Sync (0 WebSocket errors on Vercel)
   useEffect(() => {
@@ -86,8 +156,14 @@ export default function NotepadRoomPage() {
       } catch {}
     }
 
+    const profileParams = userProfile
+      ? `&email=${encodeURIComponent(userProfile.email)}&name=${encodeURIComponent(
+          userProfile.name
+        )}&avatar=${encodeURIComponent(userProfile.avatar || "")}`
+      : "";
+
     // 2. Fetch initial room state
-    fetch(`/api/sync/${roomId}?userId=${userId.current}`)
+    fetch(`/api/sync/${roomId}?userId=${userId.current}${profileParams}`)
       .then((res) => res.json())
       .then((data) => {
         if (data.code !== undefined && !code) {
@@ -107,7 +183,13 @@ export default function NotepadRoomPage() {
     // 3. Ultra-fast Serverless Live Polling (for real-time sync across devices)
     const pollInterval = setInterval(async () => {
       try {
-        const res = await fetch(`/api/sync/${roomId}?userId=${userId.current}`);
+        const pParams = userProfile
+          ? `&email=${encodeURIComponent(userProfile.email)}&name=${encodeURIComponent(
+              userProfile.name
+            )}&avatar=${encodeURIComponent(userProfile.avatar || "")}`
+          : "";
+
+        const res = await fetch(`/api/sync/${roomId}?userId=${userId.current}${pParams}`);
         if (res.ok) {
           const data = await res.json();
           if (data.usersCount) setUsersCount(data.usersCount);
@@ -133,7 +215,7 @@ export default function NotepadRoomPage() {
         broadcastChannelRef.current.close();
       }
     };
-  }, [roomId]);
+  }, [roomId, userProfile]);
 
   // Handle local typing
   const handleCodeChange = useCallback(
@@ -159,6 +241,9 @@ export default function NotepadRoomPage() {
           code: newCode,
           language,
           userId: userId.current,
+          email: userProfile?.email,
+          name: userProfile?.name,
+          avatar: userProfile?.avatar,
         }),
       })
         .then((r) => r.json())
@@ -167,7 +252,7 @@ export default function NotepadRoomPage() {
         })
         .catch(() => {});
     },
-    [roomId, language]
+    [roomId, language, userProfile]
   );
 
   // Handle language switch
@@ -189,6 +274,9 @@ export default function NotepadRoomPage() {
         code,
         language: newLang,
         userId: userId.current,
+        email: userProfile?.email,
+        name: userProfile?.name,
+        avatar: userProfile?.avatar,
       }),
     }).catch(() => {});
   };
@@ -267,8 +355,6 @@ export default function NotepadRoomPage() {
             }`}
           />
 
-          <span className="text-xs font-mono opacity-80">/{roomId}</span>
-
           {/* Live Online Badge & Interactive User Details Popover */}
           <div className="relative">
             <button
@@ -308,7 +394,7 @@ export default function NotepadRoomPage() {
                   <div className="flex items-center gap-2">
                     <Users className="h-4 w-4 text-orange-400" />
                     <span className="font-bold text-xs text-white">
-                      Live Users in /{roomId} ({activeUsers.length || usersCount})
+                      Active Users in /{roomId} ({activeUsers.length || usersCount})
                     </span>
                   </div>
                   <button
@@ -319,57 +405,117 @@ export default function NotepadRoomPage() {
                   </button>
                 </div>
 
-                {/* Users List */}
-                <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
+                {/* Sign-in prompt if not yet logged in */}
+                {!userProfile && (
+                  <div className="mb-3 p-2.5 rounded-lg bg-orange-950/30 border border-orange-500/30 flex items-center justify-between gap-2">
+                    <div className="text-[11px] text-orange-200">
+                      <span className="font-semibold text-white">Identify yourself:</span> Connect Gmail to display your name & avatar.
+                    </div>
+                    <button
+                      onClick={() => {
+                        setIsUsersModalOpen(false);
+                        setIsAuthModalOpen(true);
+                      }}
+                      className="px-2 py-1 rounded bg-orange-600 hover:bg-orange-500 text-white font-semibold text-[10px] whitespace-nowrap transition-colors cursor-pointer"
+                    >
+                      Sign In
+                    </button>
+                  </div>
+                )}
+
+                {/* Users List with Gmail & Verified Name */}
+                <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
                   {activeUsers.length > 0 ? (
-                    activeUsers.map((u, idx) => (
-                      <div
-                        key={u.userId || idx}
-                        className="rounded-lg bg-[#202026] border border-[#2a2a34] p-2.5 text-xs space-y-1.5"
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                            <span className="font-semibold text-white">
-                              {u.userId === userId.current
-                                ? "You (This Device)"
-                                : `User ${idx + 1}`}
+                    activeUsers.map((u, idx) => {
+                      const isSelf = u.userId === userId.current;
+                      const hasEmail = Boolean(u.email || (isSelf && userProfile?.email));
+                      const displayName =
+                        u.name || (isSelf && userProfile?.name) || (isSelf ? "You (Active)" : `Guest User ${idx + 1}`);
+                      const displayEmail = u.email || (isSelf && userProfile?.email) || null;
+                      const displayAvatar = u.avatar || (isSelf && userProfile?.avatar) || null;
+
+                      return (
+                        <div
+                          key={u.userId || idx}
+                          className="rounded-lg bg-[#202026] border border-[#2a2a34] p-2.5 text-xs space-y-1.5"
+                        >
+                          {/* User Header */}
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className="h-6 w-6 rounded-full bg-orange-600 border border-orange-400/50 flex items-center justify-center text-white font-bold text-[10px] overflow-hidden shrink-0">
+                                {displayAvatar ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    src={displayAvatar}
+                                    alt={displayName}
+                                    className="h-full w-full object-cover"
+                                  />
+                                ) : (
+                                  displayName.charAt(0).toUpperCase()
+                                )}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-semibold text-white truncate max-w-[140px]">
+                                    {displayName}
+                                  </span>
+                                  {isSelf && (
+                                    <span className="text-[10px] text-orange-400 font-normal">
+                                      (You)
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+                            <span className="text-[10px] text-gray-400 font-mono shrink-0">
+                              {u.device === "Mobile"
+                                ? "📱 Mobile"
+                                : u.device === "Tablet"
+                                ? "📱 Tablet"
+                                : "🖥️ Desktop"}
                             </span>
                           </div>
-                          <span className="text-[10px] text-gray-400 font-mono">
-                            {u.device === "Mobile"
-                              ? "📱 Mobile"
-                              : u.device === "Tablet"
-                              ? "📱 Tablet"
-                              : "🖥️ Desktop"}
-                          </span>
-                        </div>
 
-                        {/* Location */}
-                        <div className="flex items-center gap-1.5 text-gray-300">
-                          <MapPin className="h-3 w-3 text-orange-400 shrink-0" />
-                          <span>
-                            {u.city && u.city !== "Unknown" ? `${u.city}, ` : ""}
-                            {u.country || "Location detected"}
-                          </span>
-                          {u.region && u.region !== "Unknown" && (
-                            <span className="text-[10px] text-gray-500">
-                              ({u.region})
-                            </span>
+                          {/* Gmail Badge */}
+                          {displayEmail ? (
+                            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-orange-500/10 border border-orange-500/20 text-orange-300 font-mono text-[11px] truncate">
+                              <Mail className="h-3 w-3 text-orange-400 shrink-0" />
+                              <span className="truncate">{displayEmail}</span>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5 text-gray-500 text-[10px]">
+                              <User className="h-3 w-3 shrink-0" />
+                              <span>Guest (No Gmail attached)</span>
+                            </div>
                           )}
-                        </div>
 
-                        {/* IP & System */}
-                        <div className="flex items-center justify-between text-[11px] text-gray-400 pt-1 border-t border-[#2a2a34]">
-                          <span className="font-mono text-gray-300">
-                            IP: {u.ip}
-                          </span>
-                          <span>
-                            {u.os} • {u.browser}
-                          </span>
+                          {/* Location */}
+                          <div className="flex items-center gap-1.5 text-gray-300 text-[11px]">
+                            <MapPin className="h-3 w-3 text-orange-400 shrink-0" />
+                            <span>
+                              {u.city && u.city !== "Unknown" ? `${u.city}, ` : ""}
+                              {u.country || "Location detected"}
+                            </span>
+                            {u.region && u.region !== "Unknown" && (
+                              <span className="text-[10px] text-gray-500">
+                                ({u.region})
+                              </span>
+                            )}
+                          </div>
+
+                          {/* IP & System */}
+                          <div className="flex items-center justify-between text-[10px] text-gray-400 pt-1 border-t border-[#2a2a34]">
+                            <span className="font-mono text-gray-300">
+                              IP: {u.ip}
+                            </span>
+                            <span>
+                              {u.os} • {u.browser}
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                    ))
+                      );
+                    })
                   ) : (
                     <div className="rounded-lg bg-[#202026] border border-[#2a2a34] p-3 text-xs space-y-1.5">
                       <div className="flex items-center gap-2">
@@ -386,7 +532,7 @@ export default function NotepadRoomPage() {
                 {/* Popover Footer with Admin Link */}
                 <div className="mt-3 pt-3 border-t border-[#2e2e38] flex items-center justify-between text-xs">
                   <span className="text-[11px] text-gray-400">
-                    Real-time room session
+                    Real-time session
                   </span>
                   <Link
                     href="/admin"
@@ -401,8 +547,45 @@ export default function NotepadRoomPage() {
           </div>
         </div>
 
-        {/* Right: Actions (Language, Theme, Copy, Download, Clear, Share) */}
+        {/* Right: User Profile Button, Language, Theme, Copy, Download, Clear, Share */}
         <div className="flex items-center gap-2">
+          {/* Google Sign-in / User Profile Button */}
+          <button
+            onClick={() => setIsAuthModalOpen(true)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border transition-all cursor-pointer ${
+              userProfile
+                ? "bg-orange-950/30 border-orange-500/40 hover:bg-orange-900/40 text-orange-200"
+                : "bg-[#25252b] border-[#383842] hover:bg-[#2e2e36] text-gray-300"
+            }`}
+            title={userProfile ? userProfile.email : "Sign in with Google"}
+          >
+            {userProfile ? (
+              <>
+                <div className="h-4 w-4 rounded-full bg-orange-600 flex items-center justify-center text-[9px] font-bold text-white overflow-hidden">
+                  {userProfile.avatar ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={userProfile.avatar}
+                      alt={userProfile.name}
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    userProfile.name.charAt(0).toUpperCase()
+                  )}
+                </div>
+                <span className="font-medium max-w-[80px] sm:max-w-[120px] truncate hidden xs:inline">
+                  {userProfile.name}
+                </span>
+              </>
+            ) : (
+              <>
+                <Mail className="h-3.5 w-3.5 text-orange-400" />
+                <span className="hidden sm:inline font-medium">Google Sign-In</span>
+                <span className="sm:hidden font-medium">Sign-In</span>
+              </>
+            )}
+          </button>
+
           {/* Language Selector Dropdown */}
           <div className="relative">
             <button
@@ -532,6 +715,14 @@ export default function NotepadRoomPage() {
           </button>
         </div>
       </header>
+
+      {/* Google Auth Modal */}
+      <GoogleAuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        currentUserProfile={userProfile}
+        onProfileUpdate={handleProfileUpdate}
+      />
 
       {/* Fullscreen Instant Real-Time Notepad with Full Photo Background */}
       <main className="flex-1 w-full h-full relative overflow-hidden watermark-notepad">

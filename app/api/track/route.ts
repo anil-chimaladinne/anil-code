@@ -71,6 +71,9 @@ export async function POST(req: NextRequest) {
       screenSize: body.screenSize,
       language: body.language || headers.get("accept-language")?.split(",")[0] || "Unknown",
       timezone: body.timezone,
+      email: body.email || undefined,
+      name: body.name || undefined,
+      avatar: body.avatar || undefined,
     });
 
     return NextResponse.json({ success: true, log });
