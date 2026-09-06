@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { VisitorTracker } from "@/components/analytics/VisitorTracker";
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -41,6 +42,7 @@ export default function RootLayout({
         />
       </head>
       <body className="min-h-screen bg-[#1e1e1e] text-[#f0f6fc] antialiased selection:bg-blue-600/30 selection:text-blue-200">
+        <VisitorTracker />
         {children}
       </body>
     </html>
