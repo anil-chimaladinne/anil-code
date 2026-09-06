@@ -77,6 +77,7 @@ export default function NotepadRoomPage() {
   const lastLocalVersion = useRef(0);
   const userId = useRef(`user_${Math.random().toString(36).substring(2, 9)}`);
   const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
+  const syncTimeoutRef = useRef<any>(null);
 
   // Initialize or load user name
   useEffect(() => {
@@ -359,7 +360,7 @@ export default function NotepadRoomPage() {
           }
         }
       } catch {}
-    }, 800);
+    }, 400);
 
     return () => {
       isSubscribed = false;
@@ -376,7 +377,7 @@ export default function NotepadRoomPage() {
     };
   }, [roomId, userName, code]);
 
-  // Handle local typing with instant Socket.IO + Broadcast + HTTP dispatch
+  // Handle local typing with instant Socket.IO + Broadcast + debounced HTTP dispatch
   const handleCodeChange = useCallback(
     (newCode: string) => {
       setCode(newCode);
@@ -400,22 +401,27 @@ export default function NotepadRoomPage() {
         });
       }
 
-      // 3. Sync with Serverless API
-      fetch(`/api/sync/${roomId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          code: newCode,
-          language,
-          userId: userId.current,
-          name: userName,
-        }),
-      })
-        .then((r) => r.json())
-        .then((data) => {
-          if (data.version) lastLocalVersion.current = data.version;
+      // 3. Debounced Sync with Serverless API (instant response without overloading backend)
+      if (syncTimeoutRef.current) {
+        clearTimeout(syncTimeoutRef.current);
+      }
+      syncTimeoutRef.current = setTimeout(() => {
+        fetch(`/api/sync/${roomId}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            code: newCode,
+            language,
+            userId: userId.current,
+            name: userName,
+          }),
         })
-        .catch(() => {});
+          .then((r) => r.json())
+          .then((data) => {
+            if (data.version) lastLocalVersion.current = data.version;
+          })
+          .catch(() => {});
+      }, 100);
     },
     [roomId, language, userName]
   );
@@ -817,28 +823,6 @@ export default function NotepadRoomPage() {
               </button>
             )}
           </div>
-
-          {/* Compact Auto-Tag Toggle */}
-          <button
-            onClick={() => {
-              const next = !autoTagLine;
-              setAutoTagLine(next);
-              localStorage.setItem("anil6_auto_tag", String(next));
-            }}
-            className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium border transition-all cursor-pointer select-none ${
-              autoTagLine
-                ? "bg-emerald-950/40 border-emerald-500/50 text-emerald-300"
-                : "bg-[#25252b] border-[#383842] text-gray-400 hover:text-gray-200"
-            }`}
-            title="Automatically prefix your name whenever you start typing on a new line"
-          >
-            <span
-              className={`h-1.5 w-1.5 rounded-full shrink-0 ${
-                autoTagLine ? "bg-emerald-400 animate-pulse" : "bg-gray-500"
-              }`}
-            />
-            <span>Auto-Tag: {autoTagLine ? "ON" : "OFF"}</span>
-          </button>
 
           {/* Language Selector Dropdown */}
           <div className="relative">
