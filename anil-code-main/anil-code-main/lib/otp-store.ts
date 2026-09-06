@@ -139,6 +139,68 @@ export async function sendVerificationCode(
   // 1. GMAIL / EMAIL DELIVERY FLOW
   // ==========================================
   if (isEmail) {
+    // 1A. GMAIL / SMTP via Nodemailer (Free, sends to ANY recipient without domain verification!)
+    const gmailUser = process.env.GMAIL_USER?.trim();
+    const gmailAppPass = process.env.GMAIL_APP_PASSWORD?.trim();
+    const smtpHost = process.env.SMTP_HOST?.trim();
+    const smtpUser = process.env.SMTP_USER?.trim() || gmailUser;
+    const smtpPass = process.env.SMTP_PASS?.trim() || gmailAppPass;
+
+    if ((gmailUser && gmailAppPass) || (smtpHost && smtpUser && smtpPass)) {
+      try {
+        // @ts-ignore
+        const nodemailer = await import("nodemailer");
+        const transportConfig: any = gmailUser
+          ? {
+              service: "gmail",
+              auth: {
+                user: gmailUser,
+                pass: gmailAppPass,
+              },
+            }
+          : {
+              host: smtpHost,
+              port: parseInt(process.env.SMTP_PORT || "587"),
+              secure: process.env.SMTP_SECURE === "true",
+              auth: {
+                user: smtpUser,
+                pass: smtpPass,
+              },
+            };
+
+        const transporter = nodemailer.createTransport(transportConfig);
+        await transporter.sendMail({
+          from: `"AM Code" <${smtpUser}>`,
+          to: cleanTarget,
+          subject: `Your Verification Code: ${code}`,
+          html: `
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 28px; background: #121214; color: #ffffff; border-radius: 12px; max-width: 480px; margin: auto; border: 1px solid #27272a;">
+              <div style="text-align: center; margin-bottom: 20px;">
+                <span style="font-size: 22px; font-weight: 900; background: linear-gradient(135deg, #ea580c, #f59e0b); color: #ffffff; padding: 8px 18px; border-radius: 8px; display: inline-block;">AM</span>
+                <h2 style="color: #ffffff; margin-top: 14px; font-size: 20px;">Verification Code</h2>
+              </div>
+              <p style="font-size: 14px; color: #9ca3af; text-align: center;">Use the 6-digit code below to unlock room /${roomId || "6"}:</p>
+              <div style="background: #1f2937; padding: 18px; text-align: center; border-radius: 8px; font-size: 34px; font-weight: bold; letter-spacing: 8px; color: #fb923c; margin: 20px 0;">
+                ${code}
+              </div>
+              <p style="font-size: 12px; color: #6b7280; text-align: center;">This code expires in 10 minutes. If you did not request this, please ignore.</p>
+            </div>
+          `,
+        });
+
+        console.log(`[OTP Service] Nodemailer sent OTP successfully to ${cleanTarget}`);
+        return {
+          success: true,
+          delivered: true,
+          method: "resend",
+          message: `Verification code sent to ${cleanTarget} via Gmail! Check your inbox or spam folder.`,
+        };
+      } catch (smtpErr: any) {
+        console.error("[OTP Service] Gmail SMTP error:", smtpErr.message);
+      }
+    }
+
+    // 1B. RESEND API
     const resendApiKey = process.env.RESEND_API_KEY;
     if (resendApiKey && resendApiKey.trim().length > 0) {
       try {
@@ -151,14 +213,14 @@ export async function sendVerificationCode(
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            from: `Anil6 <${fromEmail}>`,
+            from: `AM Code <${fromEmail}>`,
             to: cleanTarget,
-            subject: `Your Anil6 Verification Code: ${code}`,
+            subject: `Your Verification Code: ${code}`,
             html: `
               <div style="font-family: Arial, sans-serif; padding: 24px; background: #121214; color: #ffffff; border-radius: 12px; max-width: 480px; margin: auto;">
                 <div style="text-align: center; margin-bottom: 20px;">
                   <span style="font-size: 24px; font-weight: 900; background: #ea580c; color: #ffffff; padding: 8px 16px; border-radius: 8px;">AM</span>
-                  <h2 style="color: #ffffff; margin-top: 12px;">Anil6 Verification Code</h2>
+                  <h2 style="color: #ffffff; margin-top: 12px;">Verification Code</h2>
                 </div>
                 <p style="font-size: 14px; color: #9ca3af;">Use the 6-digit code below to unlock room /${roomId || "6"}:</p>
                 <div style="background: #1f2937; padding: 18px; text-align: center; border-radius: 8px; font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #fb923c; margin: 20px 0;">
