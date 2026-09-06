@@ -366,9 +366,9 @@ export default function NotepadRoomPage() {
                     activeUsers.map((u, idx) => {
                       const isSelf = u.userId === userId.current;
                       const displayName =
-                        u.name || (isSelf && userProfile?.name) || (isSelf ? "You (Active)" : `User ${idx + 1}`);
-                      const displayEmail = u.email || (isSelf && userProfile?.email) || null;
-                      const displayAvatar = u.avatar || (isSelf && userProfile?.avatar) || null;
+                        u.name || (isSelf ? "You (Active)" : `User ${idx + 1}`);
+                      const displayEmail = u.email || null;
+                      const displayAvatar = u.avatar || null;
 
                       return (
                         <div
