@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
     const cleanTarget = target.trim().toLowerCase();
     const cleanCode = code.trim();
 
-    const verification = verifyOtp(cleanTarget, cleanCode);
+    const verification = await verifyOtp(cleanTarget, cleanCode);
     if (!verification.success) {
       return NextResponse.json({ error: verification.error }, { status: 400 });
     }

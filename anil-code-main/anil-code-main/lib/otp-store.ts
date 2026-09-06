@@ -1,4 +1,4 @@
-// Global In-Memory OTP Store and Dispatch Service
+// Global In-Memory OTP Store and Multi-Provider Dispatch Service (Email & Mobile SMS)
 
 export interface OtpRecord {
   target: string; // Email or Mobile Number
@@ -12,7 +12,7 @@ export interface OtpRecord {
 export interface SendResult {
   success: boolean;
   delivered: boolean;
-  method: "resend" | "brevo" | "smtp" | "twilio" | "fast2sms" | "demo_preview";
+  method: "resend" | "twilio_verify" | "fast2sms" | "twilio_sms" | "demo_preview";
   message: string;
   previewCode?: string;
   error?: string;
@@ -51,34 +51,80 @@ export function generateOtp(target: string): { code: string; expiresAt: number }
   return { code, expiresAt };
 }
 
-export function verifyOtp(target: string, inputCode: string): { success: boolean; error?: string } {
+export async function verifyOtp(target: string, inputCode: string): Promise<{ success: boolean; error?: string }> {
   const store = getOtpStore();
   const normalized = target.trim().toLowerCase();
+  const cleanCode = inputCode.trim();
+  const isEmail = normalized.includes("@");
+
+  // 1. Check in-memory store (used by Email & fallback SMS)
   const record = store.get(normalized);
+  if (record) {
+    if (Date.now() > record.expiresAt) {
+      store.delete(normalized);
+      return { success: false, error: "Verification code has expired. Please request a new one." };
+    }
 
-  if (!record) {
-    return { success: false, error: "No verification code requested for this Gmail/phone." };
+    if (record.attempts >= 5) {
+      store.delete(normalized);
+      return { success: false, error: "Too many failed attempts. Please request a new code." };
+    }
+
+    record.attempts += 1;
+
+    if (record.code === cleanCode) {
+      record.verified = true;
+      store.delete(normalized);
+      return { success: true };
+    }
   }
 
-  if (Date.now() > record.expiresAt) {
-    store.delete(normalized);
-    return { success: false, error: "Verification code has expired. Please request a new one." };
+  // 2. If mobile number, also check Twilio Verify API
+  if (!isEmail) {
+    const twilioSid = process.env.TWILIO_ACCOUNT_SID;
+    const twilioToken = process.env.TWILIO_AUTH_TOKEN;
+    const verifySid = process.env.TWILIO_VERIFY_SERVICE_SID || "VA0a94d171c4c370da0f6ee06b43bfdf02";
+
+    if (twilioSid && twilioToken && verifySid) {
+      try {
+        const formattedNumber = normalized.startsWith("+")
+          ? normalized
+          : `+91${normalized.replace(/\D/g, "").slice(-10)}`;
+
+        const url = `https://verify.twilio.com/v2/Services/${verifySid}/VerificationCheck`;
+        const auth = Buffer.from(`${twilioSid}:${twilioToken}`).toString("base64");
+
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            Authorization: `Basic ${auth}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: new URLSearchParams({
+            To: formattedNumber,
+            Code: cleanCode,
+          }).toString(),
+        });
+
+        const resData = await res.json();
+        console.log("[OTP Service] Twilio VerificationCheck response:", resData);
+
+        if (res.ok && (resData.status === "approved" || resData.valid === true)) {
+          if (record) store.delete(normalized);
+          return { success: true };
+        } else {
+          return {
+            success: false,
+            error: resData.message || "Invalid verification code. Please check your SMS.",
+          };
+        }
+      } catch (err: any) {
+        console.error("Twilio Verify Check error:", err.message);
+      }
+    }
   }
 
-  if (record.attempts >= 5) {
-    store.delete(normalized);
-    return { success: false, error: "Too many failed attempts. Please request a new code." };
-  }
-
-  record.attempts += 1;
-
-  if (record.code !== inputCode.trim()) {
-    return { success: false, error: "Incorrect verification code. Please check and try again." };
-  }
-
-  record.verified = true;
-  store.delete(normalized); // Clean up used OTP
-  return { success: true };
+  return { success: false, error: "Incorrect verification code. Please check and try again." };
 }
 
 export async function sendVerificationCode(
@@ -89,7 +135,9 @@ export async function sendVerificationCode(
   const cleanTarget = target.trim().toLowerCase();
   const isEmail = cleanTarget.includes("@");
 
-  // 1. RESEND API DISPATCH
+  // ==========================================
+  // 1. GMAIL / EMAIL DELIVERY FLOW
+  // ==========================================
   if (isEmail) {
     const resendApiKey = process.env.RESEND_API_KEY;
     if (resendApiKey && resendApiKey.trim().length > 0) {
@@ -133,11 +181,11 @@ export async function sendVerificationCode(
         } else {
           const detail = resData.message || resData.error || "Email delivery failed";
           return {
-            success: true,
+            success: false,
             delivered: false,
-            method: "demo_preview",
-            previewCode: code,
-            message: `Notice: ${detail}. Use code below.`,
+            method: "resend",
+            error: `Resend Notice: ${detail}`,
+            message: `Notice: ${detail}`,
           };
         }
       } catch (err: any) {
@@ -146,9 +194,62 @@ export async function sendVerificationCode(
     }
   }
 
+  // ==========================================
   // 2. MOBILE SMS DELIVERY FLOW
+  // ==========================================
   if (!isEmail) {
-    // 2A. FAST2SMS FOR INDIAN NUMBERS
+    // 2A. TWILIO VERIFY SERVICE (Works directly with all Indian mobile numbers)
+    const twilioSid = process.env.TWILIO_ACCOUNT_SID;
+    const twilioToken = process.env.TWILIO_AUTH_TOKEN;
+    const verifySid = process.env.TWILIO_VERIFY_SERVICE_SID || "VA0a94d171c4c370da0f6ee06b43bfdf02";
+
+    if (twilioSid && twilioToken && verifySid) {
+      try {
+        const formattedNumber = cleanTarget.startsWith("+")
+          ? cleanTarget
+          : `+91${cleanTarget.replace(/\D/g, "").slice(-10)}`;
+
+        const url = `https://verify.twilio.com/v2/Services/${verifySid}/Verifications`;
+        const auth = Buffer.from(`${twilioSid}:${twilioToken}`).toString("base64");
+
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            Authorization: `Basic ${auth}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: new URLSearchParams({
+            To: formattedNumber,
+            Channel: "sms",
+          }).toString(),
+        });
+
+        const resData = await res.json();
+        console.log("[OTP Service] Twilio Verify dispatch response:", resData);
+
+        if (res.ok && (resData.status === "pending" || resData.sid)) {
+          return {
+            success: true,
+            delivered: true,
+            method: "twilio_verify",
+            message: `SMS dispatched to ${cleanTarget}! Check your mobile SMS messages.`,
+          };
+        } else {
+          const detail = resData.message || "Twilio SMS dispatch failed";
+          return {
+            success: false,
+            delivered: false,
+            method: "twilio_verify",
+            error: `SMS Error: ${detail}`,
+            message: `SMS Error: ${detail}`,
+          };
+        }
+      } catch (twilioErr: any) {
+        console.error("Twilio Verify error:", twilioErr.message);
+      }
+    }
+
+    // 2B. FAST2SMS FALLBACK
     const fast2smsKey = process.env.FAST2SMS_API_KEY;
     if (fast2smsKey && fast2smsKey.trim().length > 0) {
       try {
@@ -169,7 +270,6 @@ export async function sendVerificationCode(
         });
 
         const resData = await res.json();
-        console.log("[OTP Service] Fast2SMS response:", resData);
         if (res.ok && (resData.return === true || resData.status_code === 200)) {
           return {
             success: true,
@@ -177,75 +277,9 @@ export async function sendVerificationCode(
             method: "fast2sms",
             message: `SMS dispatched to ${cleanTarget}! Check your mobile messages.`,
           };
-        } else {
-          const detail = resData.message
-            ? Array.isArray(resData.message)
-              ? resData.message.join(", ")
-              : String(resData.message)
-            : "Fast2SMS delivery failed";
-          return {
-            success: false,
-            delivered: false,
-            method: "fast2sms",
-            error: `SMS Gateway Error: ${detail}`,
-            message: `SMS could not be delivered: ${detail}`,
-          };
         }
       } catch (smsErr: any) {
         console.error("Fast2SMS error:", smsErr.message);
-      }
-    }
-
-    // 2B. TWILIO SMS FOR GLOBAL PHONE NUMBERS
-    const twilioSid = process.env.TWILIO_ACCOUNT_SID;
-    const twilioToken = process.env.TWILIO_AUTH_TOKEN;
-    const twilioFrom = process.env.TWILIO_PHONE_NUMBER;
-
-    if (twilioSid && twilioToken && twilioFrom) {
-      try {
-        const formattedNumber = cleanTarget.startsWith("+")
-          ? cleanTarget
-          : `+91${cleanTarget.replace(/\D/g, "").slice(-10)}`;
-
-        const url = `https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/Messages.json`;
-        const auth = Buffer.from(`${twilioSid}:${twilioToken}`).toString("base64");
-
-        const body = new URLSearchParams({
-          To: formattedNumber,
-          From: twilioFrom,
-          Body: `Your Anil6 verification code is: ${code}. Valid for 10 minutes.`,
-        });
-
-        const res = await fetch(url, {
-          method: "POST",
-          headers: {
-            Authorization: `Basic ${auth}`,
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
-          body: body.toString(),
-        });
-
-        const resData = await res.json();
-        console.log("[OTP Service] Twilio response:", resData);
-        if (res.ok && resData.sid) {
-          return {
-            success: true,
-            delivered: true,
-            method: "twilio",
-            message: `SMS dispatched to ${cleanTarget}! Check your mobile messages.`,
-          };
-        } else {
-          const detail = resData.message || "Twilio delivery failed";
-          return {
-            success: false,
-            delivered: false,
-            method: "twilio",
-            error: `Twilio Error: ${detail}`,
-            message: `Twilio Error: ${detail}`,
-          };
-        }
-      } catch (twilioErr: any) {
-        console.error("Twilio error:", twilioErr.message);
       }
     }
 
@@ -253,8 +287,8 @@ export async function sendVerificationCode(
     return {
       success: false,
       delivered: false,
-      method: "fast2sms",
-      error: "No SMS gateway configured or delivery failed. Please try Gmail verification.",
+      method: "twilio_verify",
+      error: "Could not send SMS to this mobile number. Please try Gmail verification.",
       message: "No active SMS provider configured.",
     };
   }
