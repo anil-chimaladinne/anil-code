@@ -28,6 +28,11 @@ export function MandatoryAuthGate({ roomId, onAuthenticate }: MandatoryAuthGateP
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [previewCode, setPreviewCode] = useState<string | null>(null);
+  const [deliveryInfo, setDeliveryInfo] = useState<{
+    delivered: boolean;
+    method: string;
+    message: string;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
@@ -65,6 +70,11 @@ export function MandatoryAuthGate({ roomId, onAuthenticate }: MandatoryAuthGateP
       if (res.ok && data.success) {
         setStep("verify");
         setPreviewCode(data.previewCode || null);
+        setDeliveryInfo({
+          delivered: Boolean(data.delivered),
+          method: data.method || "demo_preview",
+          message: data.message || "",
+        });
         setResendCooldown(30);
       } else {
         setError(data.error || "Failed to send verification code. Try again.");
@@ -243,15 +253,52 @@ export function MandatoryAuthGate({ roomId, onAuthenticate }: MandatoryAuthGateP
         ) : (
           /* STEP 2: Enter 6-digit Verification Code */
           <form onSubmit={handleVerifyCode} className="space-y-4">
-            <div className="p-3 rounded-xl bg-[#202026] border border-[#2d2d38] text-center space-y-1">
-              <div className="text-xs font-semibold text-white">
-                📬 Check your inbox or phone
+            {/* Status indicator */}
+            {deliveryInfo?.delivered ? (
+              <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-800/60 text-center space-y-1">
+                <div className="text-xs font-semibold text-emerald-300 flex items-center justify-center gap-1.5">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                  <span>Verification Code Dispatched!</span>
+                </div>
+                <p className="text-[11px] text-emerald-200/80">
+                  Please check your inbox (and spam/promotions folder) for{" "}
+                  <span className="font-mono text-white font-semibold">{target}</span>.
+                </p>
               </div>
-              <p className="text-[11px] text-gray-400">
-                We sent a 6-digit security code to{" "}
-                <span className="font-mono text-orange-400 font-semibold">{target}</span>. Please enter it below.
-              </p>
-            </div>
+            ) : (
+              <div className="p-3.5 rounded-xl bg-amber-950/30 border border-amber-600/40 text-left space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                    <Sparkles className="h-3 w-3" />
+                    Testing / Demo OTP
+                  </span>
+                  {previewCode && (
+                    <button
+                      type="button"
+                      onClick={() => setCode(previewCode)}
+                      className="text-[11px] bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-semibold px-2 py-0.5 rounded border border-amber-500/40 transition-colors cursor-pointer"
+                    >
+                      ⚡ Auto-fill Code
+                    </button>
+                  )}
+                </div>
+                {previewCode && (
+                  <div className="flex items-center justify-between bg-[#131316] p-2 rounded-lg border border-amber-500/20">
+                    <span className="text-xs text-gray-400">Your Code:</span>
+                    <span className="font-mono font-black text-base text-amber-400 tracking-widest">
+                      {previewCode}
+                    </span>
+                  </div>
+                )}
+                <p className="text-[10px] text-gray-400 leading-tight">
+                  {deliveryInfo?.message || (
+                    <>
+                      ℹ️ To send real emails to your Gmail inbox, add <code className="text-amber-300 font-mono">GMAIL_USER</code> and <code className="text-amber-300 font-mono">GMAIL_APP_PASSWORD</code> (or <code className="text-amber-300 font-mono">RESEND_API_KEY</code>) to <code className="text-gray-300 font-mono">.env.local</code>.
+                    </>
+                  )}
+                </p>
+              </div>
+            )}
 
             <div>
               <label className="block text-xs font-semibold text-gray-300 mb-2 text-center">
