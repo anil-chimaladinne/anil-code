@@ -146,8 +146,9 @@ export async function sendVerificationCode(
     }
   }
 
-  // 2. FAST2SMS FOR INDIAN NUMBERS
+  // 2. MOBILE SMS DELIVERY FLOW
   if (!isEmail) {
+    // 2A. FAST2SMS FOR INDIAN NUMBERS
     const fast2smsKey = process.env.FAST2SMS_API_KEY;
     if (fast2smsKey && fast2smsKey.trim().length > 0) {
       try {
@@ -173,11 +174,53 @@ export async function sendVerificationCode(
             success: true,
             delivered: true,
             method: "fast2sms",
-            message: `SMS dispatched to ${cleanTarget}!`,
+            message: `SMS dispatched to ${cleanTarget}! Check your mobile messages.`,
           };
         }
       } catch (smsErr: any) {
         console.error("Fast2SMS error:", smsErr.message);
+      }
+    }
+
+    // 2B. TWILIO SMS FOR GLOBAL PHONE NUMBERS
+    const twilioSid = process.env.TWILIO_ACCOUNT_SID;
+    const twilioToken = process.env.TWILIO_AUTH_TOKEN;
+    const twilioFrom = process.env.TWILIO_PHONE_NUMBER;
+
+    if (twilioSid && twilioToken && twilioFrom) {
+      try {
+        const formattedNumber = cleanTarget.startsWith("+")
+          ? cleanTarget
+          : `+91${cleanTarget.replace(/\D/g, "").slice(-10)}`;
+
+        const url = `https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/Messages.json`;
+        const auth = Buffer.from(`${twilioSid}:${twilioToken}`).toString("base64");
+
+        const body = new URLSearchParams({
+          To: formattedNumber,
+          From: twilioFrom,
+          Body: `Your Anil6 verification code is: ${code}. Valid for 10 minutes.`,
+        });
+
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            Authorization: `Basic ${auth}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: body.toString(),
+        });
+
+        if (res.ok) {
+          return {
+            success: true,
+            delivered: true,
+            method: "twilio",
+            message: `SMS dispatched to ${cleanTarget}! Check your mobile messages.`,
+          };
+        }
+      } catch (twilioErr: any) {
+        console.error("Twilio error:", twilioErr.message);
       }
     }
   }
