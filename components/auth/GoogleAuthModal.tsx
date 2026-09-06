@@ -25,7 +25,6 @@ export function GoogleAuthModal({
 }: GoogleAuthModalProps) {
   const [emailInput, setEmailInput] = useState(currentUserProfile?.email || "");
   const [nameInput, setNameInput] = useState(currentUserProfile?.name || "");
-  const [activeTab, setActiveTab] = useState<"google" | "quick">("google");
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

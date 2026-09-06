@@ -1,4 +1,4 @@
-// Global In-Memory OTP Store
+// Global In-Memory OTP Store and Dispatch Service
 
 export interface OtpRecord {
   target: string; // Email or Mobile Number
@@ -7,6 +7,15 @@ export interface OtpRecord {
   expiresAt: number;
   attempts: number;
   verified: boolean;
+}
+
+export interface SendResult {
+  success: boolean;
+  delivered: boolean;
+  method: "resend" | "brevo" | "smtp" | "twilio" | "fast2sms" | "demo_preview";
+  message: string;
+  previewCode?: string;
+  error?: string;
 }
 
 declare global {
@@ -70,4 +79,117 @@ export function verifyOtp(target: string, inputCode: string): { success: boolean
   record.verified = true;
   store.delete(normalized); // Clean up used OTP
   return { success: true };
+}
+
+export async function sendVerificationCode(
+  target: string,
+  code: string,
+  roomId: string = "6"
+): Promise<SendResult> {
+  const cleanTarget = target.trim().toLowerCase();
+  const isEmail = cleanTarget.includes("@");
+
+  // 1. RESEND API DISPATCH
+  if (isEmail) {
+    const resendApiKey = process.env.RESEND_API_KEY;
+    if (resendApiKey && resendApiKey.trim().length > 0) {
+      try {
+        const fromEmail =
+          process.env.RESEND_FROM_EMAIL?.trim() || "onboarding@resend.dev";
+        const res = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${resendApiKey.trim()}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            from: `Anil6 <${fromEmail}>`,
+            to: cleanTarget,
+            subject: `Your Anil6 Verification Code: ${code}`,
+            html: `
+              <div style="font-family: Arial, sans-serif; padding: 24px; background: #121214; color: #ffffff; border-radius: 12px; max-width: 480px; margin: auto;">
+                <div style="text-align: center; margin-bottom: 20px;">
+                  <span style="font-size: 24px; font-weight: 900; background: #ea580c; color: #ffffff; padding: 8px 16px; border-radius: 8px;">AM</span>
+                  <h2 style="color: #ffffff; margin-top: 12px;">Anil6 Verification Code</h2>
+                </div>
+                <p style="font-size: 14px; color: #9ca3af;">Use the 6-digit code below to unlock room /${roomId || "6"}:</p>
+                <div style="background: #1f2937; padding: 18px; text-align: center; border-radius: 8px; font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #fb923c; margin: 20px 0;">
+                  ${code}
+                </div>
+                <p style="font-size: 12px; color: #6b7280; text-align: center;">Expires in 10 minutes.</p>
+              </div>
+            `,
+          }),
+        });
+
+        const resData = await res.json();
+        if (res.ok && resData.id) {
+          return {
+            success: true,
+            delivered: true,
+            method: "resend",
+            message: `Verification code sent to ${cleanTarget} via email!`,
+          };
+        } else {
+          const detail = resData.message || resData.error || "Email delivery failed";
+          return {
+            success: true,
+            delivered: false,
+            method: "demo_preview",
+            previewCode: code,
+            message: `Notice: ${detail}. Use code below.`,
+          };
+        }
+      } catch (err: any) {
+        console.error("Resend error:", err.message);
+      }
+    }
+  }
+
+  // 2. FAST2SMS FOR INDIAN NUMBERS
+  if (!isEmail) {
+    const fast2smsKey = process.env.FAST2SMS_API_KEY;
+    if (fast2smsKey && fast2smsKey.trim().length > 0) {
+      try {
+        const rawDigits = cleanTarget.replace(/\D/g, "");
+        const mobile10 = rawDigits.length > 10 ? rawDigits.slice(-10) : rawDigits;
+
+        const res = await fetch("https://www.fast2sms.com/dev/bulkV2", {
+          method: "POST",
+          headers: {
+            authorization: fast2smsKey.trim(),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            route: "otp",
+            variables_values: code,
+            numbers: mobile10,
+          }),
+        });
+
+        const resData = await res.json();
+        if (res.ok && (resData.return === true || resData.status_code === 200)) {
+          return {
+            success: true,
+            delivered: true,
+            method: "fast2sms",
+            message: `SMS dispatched to ${cleanTarget}!`,
+          };
+        }
+      } catch (smsErr: any) {
+        console.error("Fast2SMS error:", smsErr.message);
+      }
+    }
+  }
+
+  // 3. DEV / DEMO FALLBACK
+  return {
+    success: true,
+    delivered: false,
+    method: "demo_preview",
+    previewCode: code,
+    message: isEmail
+      ? `No Resend API Key configured in .env.local. Use the preview code below.`
+      : `No SMS gateway configured in .env.local. Use the preview code below.`,
+  };
 }
