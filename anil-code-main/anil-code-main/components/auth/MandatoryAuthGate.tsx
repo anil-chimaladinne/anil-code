@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Mail, User, ArrowRight, ShieldCheck, Sparkles, Code2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Mail, User, ArrowRight, ShieldCheck, ArrowLeft, XCircle } from "lucide-react";
 import { UserProfile } from "./GoogleAuthModal";
 
 interface MandatoryAuthGateProps {
@@ -10,6 +11,7 @@ interface MandatoryAuthGateProps {
 }
 
 export function MandatoryAuthGate({ roomId, onAuthenticate }: MandatoryAuthGateProps) {
+  const router = useRouter();
   const [identifier, setIdentifier] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -44,6 +46,14 @@ export function MandatoryAuthGate({ roomId, onAuthenticate }: MandatoryAuthGateP
     setIsLoading(false);
   };
 
+  const handleGoBack = () => {
+    if (typeof window !== "undefined" && window.history.length > 1) {
+      window.history.back();
+    } else {
+      router.push("/");
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#121214] text-gray-200 selection:bg-orange-500/30">
       {/* Full Photo Background Overlay */}
@@ -66,7 +76,7 @@ export function MandatoryAuthGate({ roomId, onAuthenticate }: MandatoryAuthGateP
             Welcome to Anil<span className="text-orange-500">6</span>
           </h1>
           <p className="text-xs text-gray-400 mt-1">
-            Please enter your <strong className="text-gray-200">Name</strong> or <strong className="text-gray-200">Gmail</strong> to access room <span className="font-mono text-orange-400 font-bold">/{roomId}</span>
+            Sign in is <strong className="text-orange-400 font-semibold">compulsory</strong> to access room <span className="font-mono text-white font-bold">/{roomId}</span>
           </p>
         </div>
 
@@ -74,7 +84,7 @@ export function MandatoryAuthGate({ roomId, onAuthenticate }: MandatoryAuthGateP
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-gray-300 mb-2">
-              Your Name or Gmail Address <span className="text-orange-500">*</span>
+              Enter Your Name or Gmail <span className="text-orange-500">*</span>
             </label>
             <div className="relative">
               <input
@@ -84,7 +94,7 @@ export function MandatoryAuthGate({ roomId, onAuthenticate }: MandatoryAuthGateP
                   setIdentifier(e.target.value);
                   if (error) setError(null);
                 }}
-                placeholder="e.g. Anil Kumar or anil@gmail.com"
+                placeholder="e.g. Anil Kumar or yourname@gmail.com"
                 required
                 autoFocus
                 className="w-full rounded-xl bg-[#222228] border border-[#34343e] pl-10 pr-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500 transition-colors"
@@ -105,25 +115,37 @@ export function MandatoryAuthGate({ roomId, onAuthenticate }: MandatoryAuthGateP
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={isLoading || !identifier.trim()}
-            className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-orange-600 to-amber-500 hover:from-orange-500 hover:to-amber-400 text-white font-bold py-3 text-sm shadow-lg shadow-orange-600/25 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-40"
-          >
-            {isLoading ? (
-              <div className="h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
-            ) : (
-              <>
-                <span>Enter Notepad</span>
-                <ArrowRight className="h-4 w-4" />
-              </>
-            )}
-          </button>
+          {/* Buttons: Submit & Go Back */}
+          <div className="space-y-2 pt-1">
+            <button
+              type="submit"
+              disabled={isLoading || !identifier.trim()}
+              className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-orange-600 to-amber-500 hover:from-orange-500 hover:to-amber-400 text-white font-bold py-3 text-sm shadow-lg shadow-orange-600/25 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-40"
+            >
+              {isLoading ? (
+                <div className="h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+              ) : (
+                <>
+                  <span>Sign In & Open Notepad</span>
+                  <ArrowRight className="h-4 w-4" />
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleGoBack}
+              className="w-full flex items-center justify-center gap-2 rounded-xl bg-[#222228] hover:bg-[#2c2c34] border border-[#34343e] text-gray-400 hover:text-white py-2.5 text-xs font-semibold transition-colors cursor-pointer"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              <span>Cancel & Go to Back Page</span>
+            </button>
+          </div>
         </form>
 
         <div className="mt-6 pt-4 border-t border-[#26262e] flex items-center justify-center gap-1.5 text-[11px] text-gray-500">
           <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
-          <span>Your identity connects you to live room collaboration</span>
+          <span>Compulsory identification for live notepad session</span>
         </div>
       </div>
     </div>
