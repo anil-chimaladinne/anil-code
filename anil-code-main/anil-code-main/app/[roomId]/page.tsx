@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Editor, { OnMount } from "@monaco-editor/react";
+import Link from "next/link";
 import {
   Share2,
   Copy,
@@ -12,6 +13,14 @@ import {
   Moon,
   Sun,
   ChevronDown,
+  Users,
+  MapPin,
+  Monitor,
+  Smartphone,
+  Tablet,
+  ExternalLink,
+  X,
+  ShieldCheck,
 } from "lucide-react";
 
 const LANGUAGES = [
@@ -36,6 +45,9 @@ export default function NotepadRoomPage() {
   const [language, setLanguage] = useState<string>("javascript");
   const [theme, setTheme] = useState<"vs-dark" | "vs-light">("vs-dark");
   const [usersCount, setUsersCount] = useState<number>(1);
+  const [activeUsers, setActiveUsers] = useState<any[]>([]);
+  const [isUsersModalOpen, setIsUsersModalOpen] = useState(false);
+  const [copiedIp, setCopiedIp] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
   const [isLangOpen, setIsLangOpen] = useState(false);
@@ -83,6 +95,7 @@ export default function NotepadRoomPage() {
           setCode(data.code);
           if (data.language) setLanguage(data.language);
           if (data.usersCount) setUsersCount(data.usersCount);
+          if (data.activeUsers) setActiveUsers(data.activeUsers);
           lastLocalVersion.current = data.version || 1;
           setTimeout(() => {
             isRemoteUpdate.current = false;
@@ -98,6 +111,7 @@ export default function NotepadRoomPage() {
         if (res.ok) {
           const data = await res.json();
           if (data.usersCount) setUsersCount(data.usersCount);
+          if (data.activeUsers) setActiveUsers(data.activeUsers);
           if (data.version > lastLocalVersion.current) {
             lastLocalVersion.current = data.version;
             if (!isRemoteUpdate.current) {
@@ -255,12 +269,135 @@ export default function NotepadRoomPage() {
 
           <span className="text-xs font-mono opacity-80">/{roomId}</span>
 
-          {/* Live Online Badge */}
-          <div className="flex items-center gap-1.5 ml-1 text-xs">
-            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-[11px] opacity-75 hidden sm:inline">
-              {usersCount} {usersCount === 1 ? "user" : "users"} online
-            </span>
+          {/* Live Online Badge & Interactive User Details Popover */}
+          <div className="relative">
+            <button
+              onClick={() => setIsUsersModalOpen(!isUsersModalOpen)}
+              className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs border transition-all cursor-pointer select-none ${
+                theme === "vs-dark"
+                  ? "bg-[#25252b] border-[#383842] hover:bg-[#2e2e36] text-gray-200"
+                  : "bg-white border-gray-300 hover:bg-gray-50 text-gray-800"
+              }`}
+              title="Click to view live user information"
+            >
+              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+              <span className="text-[11px] font-medium hidden sm:inline">
+                {usersCount} {usersCount === 1 ? "user" : "users"} online
+              </span>
+              <span className="text-[11px] font-medium sm:hidden">
+                {usersCount} online
+              </span>
+              <ChevronDown
+                className={`h-3 w-3 opacity-60 transition-transform duration-150 ${
+                  isUsersModalOpen ? "rotate-180" : ""
+                }`}
+              />
+            </button>
+
+            {/* User Details Dropdown Popover */}
+            {isUsersModalOpen && (
+              <div
+                className={`absolute left-0 top-full mt-2 w-80 sm:w-96 rounded-xl border p-4 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-150 ${
+                  theme === "vs-dark"
+                    ? "bg-[#18181c] border-[#2e2e38] text-gray-200"
+                    : "bg-white border-gray-200 text-gray-800 shadow-xl"
+                }`}
+              >
+                {/* Popover Header */}
+                <div className="flex items-center justify-between pb-3 border-b border-[#2e2e38] mb-3">
+                  <div className="flex items-center gap-2">
+                    <Users className="h-4 w-4 text-orange-400" />
+                    <span className="font-bold text-xs text-white">
+                      Live Users in /{roomId} ({activeUsers.length || usersCount})
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setIsUsersModalOpen(false)}
+                    className="p-1 rounded-md hover:bg-[#282830] text-gray-400 hover:text-white transition-colors cursor-pointer"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+
+                {/* Users List */}
+                <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
+                  {activeUsers.length > 0 ? (
+                    activeUsers.map((u, idx) => (
+                      <div
+                        key={u.userId || idx}
+                        className="rounded-lg bg-[#202026] border border-[#2a2a34] p-2.5 text-xs space-y-1.5"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                            <span className="font-semibold text-white">
+                              {u.userId === userId.current
+                                ? "You (This Device)"
+                                : `User ${idx + 1}`}
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-gray-400 font-mono">
+                            {u.device === "Mobile"
+                              ? "📱 Mobile"
+                              : u.device === "Tablet"
+                              ? "📱 Tablet"
+                              : "🖥️ Desktop"}
+                          </span>
+                        </div>
+
+                        {/* Location */}
+                        <div className="flex items-center gap-1.5 text-gray-300">
+                          <MapPin className="h-3 w-3 text-orange-400 shrink-0" />
+                          <span>
+                            {u.city && u.city !== "Unknown" ? `${u.city}, ` : ""}
+                            {u.country || "Location detected"}
+                          </span>
+                          {u.region && u.region !== "Unknown" && (
+                            <span className="text-[10px] text-gray-500">
+                              ({u.region})
+                            </span>
+                          )}
+                        </div>
+
+                        {/* IP & System */}
+                        <div className="flex items-center justify-between text-[11px] text-gray-400 pt-1 border-t border-[#2a2a34]">
+                          <span className="font-mono text-gray-300">
+                            IP: {u.ip}
+                          </span>
+                          <span>
+                            {u.os} • {u.browser}
+                          </span>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="rounded-lg bg-[#202026] border border-[#2a2a34] p-3 text-xs space-y-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                        <span className="font-semibold text-white">You (Active)</span>
+                      </div>
+                      <p className="text-[11px] text-gray-400">
+                        Connected to room /{roomId}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Popover Footer with Admin Link */}
+                <div className="mt-3 pt-3 border-t border-[#2e2e38] flex items-center justify-between text-xs">
+                  <span className="text-[11px] text-gray-400">
+                    Real-time room session
+                  </span>
+                  <Link
+                    href="/admin"
+                    className="inline-flex items-center gap-1 text-orange-400 hover:text-orange-300 font-semibold text-[11px] transition-colors"
+                  >
+                    <span>Full Visitor Admin</span>
+                    <ExternalLink className="h-3 w-3" />
+                  </Link>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
