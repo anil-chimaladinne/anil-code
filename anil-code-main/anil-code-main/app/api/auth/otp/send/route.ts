@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generateOtp } from "@/lib/otp-store";
-import { sendVerificationCode } from "@/lib/email-service";
+import { generateOtp, sendVerificationCode } from "@/lib/otp-store";
 
 export async function POST(req: NextRequest) {
   try {
