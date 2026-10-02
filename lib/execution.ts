@@ -1,14 +1,25 @@
+export interface SqlQueryResult {
+  query: string;
+  isSelect: boolean;
+  headers?: string[];
+  rows?: any[][];
+  rowCount: number;
+  message?: string;
+}
+
 export interface ExecutionResult {
   stdout: string;
   stderr: string;
   exitCode: number;
   executionTimeMs: number;
   isHtmlPreview?: boolean;
+  sqlResults?: SqlQueryResult[];
 }
 
 export async function executeCode(
   languageId: string,
-  code: string
+  code: string,
+  stdin?: string
 ): Promise<ExecutionResult> {
   const startTime = performance.now();
 
@@ -28,12 +39,32 @@ export async function executeCode(
     return executeClientJavaScript(code);
   }
 
-  // 3. Multi-Language Execution via API route
+  // 3. Client-Side JSON Validation
+  if (languageId === "json" && typeof window !== "undefined") {
+    try {
+      const parsed = JSON.parse(code);
+      return {
+        stdout: `✓ JSON Syntax Valid\n\nFormatted Output:\n${JSON.stringify(parsed, null, 2)}`,
+        stderr: "",
+        exitCode: 0,
+        executionTimeMs: Math.round(performance.now() - startTime),
+      };
+    } catch (err: any) {
+      return {
+        stdout: "",
+        stderr: `JSON Parse Error: ${err.message}`,
+        exitCode: 1,
+        executionTimeMs: Math.round(performance.now() - startTime),
+      };
+    }
+  }
+
+  // 4. Multi-Language Execution via API route
   try {
     const res = await fetch("/api/execute", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ language: languageId, code }),
+      body: JSON.stringify({ language: languageId, code, stdin }),
     });
 
     if (!res.ok) {
@@ -52,11 +83,12 @@ export async function executeCode(
       stderr: data.stderr || "",
       exitCode: data.exitCode ?? 0,
       executionTimeMs: data.executionTimeMs ?? Math.round(performance.now() - startTime),
+      sqlResults: data.sqlResults,
     };
   } catch (error: any) {
     return {
       stdout: "",
-      stderr: `Network or execution error: ${error.message || "Unknown error"}`,
+      stderr: `Network or execution error: ${error.message || "Failed to reach execution backend. Ensure the server is running."}`,
       exitCode: 1,
       executionTimeMs: Math.round(performance.now() - startTime),
     };

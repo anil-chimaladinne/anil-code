@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const requestedLanguage = body.language || "javascript";
     const languageConfig = getLanguageById(requestedLanguage);
-    const initialCode = body.code || languageConfig.defaultCode;
+    const initialCode = body.code !== undefined ? body.code : "";
     const title = body.title || "Untitled Room";
     const roomCode = body.customCode || generateRoomId();
 

@@ -266,19 +266,25 @@ body {
     name: "SQL",
     extension: ".sql",
     monacoLanguage: "sql",
-    supportsExecution: false,
-    defaultCode: `-- CodeConnect — SQL Queries
-CREATE TABLE rooms (
-    id VARCHAR(36) PRIMARY KEY,
-    room_code VARCHAR(64) UNIQUE NOT NULL,
-    language VARCHAR(32) DEFAULT 'javascript',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    supportsExecution: true,
+    defaultCode: `-- SQL Playground (SQLite In-Memory Engine)
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    role TEXT DEFAULT 'developer',
+    email TEXT UNIQUE
 );
 
-INSERT INTO rooms (id, room_code, language)
-VALUES ('cuid_123', 'quantum-flux-882', 'python');
+INSERT INTO users (name, role, email) VALUES
+('Anil', 'Admin', 'anil@example.com'),
+('Alex', 'Developer', 'alex@example.com'),
+('Sarah', 'Designer', 'sarah@example.com');
 
-SELECT * FROM rooms ORDER BY created_at DESC;
+-- Query all users
+SELECT * FROM users;
+
+-- Filter query
+SELECT name, role FROM users WHERE role = 'Developer';
 `,
   },
   {

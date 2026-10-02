@@ -130,7 +130,7 @@ export function EditorToolbar({
           onClick={onRunCode}
           disabled={isRunning}
           className="flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-3.5 py-1.5 shadow-sm shadow-emerald-600/30 active:scale-95 transition-all disabled:opacity-50 cursor-pointer"
-          title="Execute code (Ctrl+Enter / Cmd+Enter)"
+          title="Execute code (F9 / F11 / F5 / Ctrl+Enter)"
         >
           {isRunning ? (
             <>

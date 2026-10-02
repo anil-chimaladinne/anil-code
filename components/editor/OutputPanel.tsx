@@ -170,7 +170,7 @@ export function OutputPanel({
               No output to display yet.
             </p>
             <p className="text-[11px] text-gray-500">
-              Click <span className="text-emerald-400 font-semibold">Run Code</span> or press <kbd className="px-1.5 py-0.5 rounded bg-ide-panel border border-ide-border text-gray-300 font-mono text-[10px]">Ctrl+Enter</kbd> to execute.
+              Click <span className="text-emerald-400 font-semibold">Run Code</span> or press <kbd className="px-1.5 py-0.5 rounded bg-ide-panel border border-ide-border text-gray-300 font-mono text-[10px]">F9</kbd> / <kbd className="px-1.5 py-0.5 rounded bg-ide-panel border border-ide-border text-gray-300 font-mono text-[10px]">F11</kbd> / <kbd className="px-1.5 py-0.5 rounded bg-ide-panel border border-ide-border text-gray-300 font-mono text-[10px]">Ctrl+Enter</kbd> to execute.
             </p>
           </div>
         )}

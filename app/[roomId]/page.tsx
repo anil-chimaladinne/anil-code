@@ -14,17 +14,23 @@ import {
   Sun,
   ChevronDown,
   Users,
-  MapPin,
-  Monitor,
-  Smartphone,
-  Tablet,
   ExternalLink,
   X,
-  Mail,
   User,
-  ShieldCheck,
+  Play,
+  Terminal,
+  RotateCcw,
   Sparkles,
+  Clock,
+  CheckCircle2,
+  AlertTriangle,
+  Eye,
+  FileCode,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
+import { SUPPORTED_LANGUAGES, getLanguageById } from "@/lib/languages";
+import { executeCode, ExecutionResult } from "@/lib/execution";
 
 export interface UserProfile {
   name: string;
@@ -32,20 +38,6 @@ export interface UserProfile {
   avatar?: string;
   provider?: string;
 }
-
-const LANGUAGES = [
-  { id: "plaintext", name: "Plain Text", ext: ".txt" },
-  { id: "javascript", name: "JavaScript", ext: ".js" },
-  { id: "typescript", name: "TypeScript", ext: ".ts" },
-  { id: "python", name: "Python", ext: ".py" },
-  { id: "html", name: "HTML", ext: ".html" },
-  { id: "css", name: "CSS", ext: ".css" },
-  { id: "cpp", name: "C++", ext: ".cpp" },
-  { id: "java", name: "Java", ext: ".java" },
-  { id: "json", name: "JSON", ext: ".json" },
-  { id: "markdown", name: "Markdown", ext: ".md" },
-  { id: "sql", name: "SQL", ext: ".sql" },
-];
 
 export default function NotepadRoomPage() {
   const params = useParams();
@@ -65,10 +57,23 @@ export default function NotepadRoomPage() {
   const [inputName, setInputName] = useState("");
   const [autoTagLine, setAutoTagLine] = useState<boolean>(true);
 
+  // Compilation & Output Panel state
+  const [isRunning, setIsRunning] = useState<boolean>(false);
+  const [isOutputOpen, setIsOutputOpen] = useState<boolean>(false);
+  const [executionResult, setExecutionResult] = useState<ExecutionResult | null>(null);
+  const [activeOutputTab, setActiveOutputTab] = useState<"output" | "preview">("output");
+  const [customInput, setCustomInput] = useState<string>("");
+  const [showCustomInput, setShowCustomInput] = useState<boolean>(true);
+  const [copiedOutput, setCopiedOutput] = useState<boolean>(false);
+  const [isOutputExpanded, setIsOutputExpanded] = useState<boolean>(false);
+
   const [copiedLink, setCopiedLink] = useState(false);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [shareUrl, setShareUrl] = useState("");
   const [copiedCode, setCopiedCode] = useState(false);
   const [taggedToast, setTaggedToast] = useState(false);
   const [isLangOpen, setIsLangOpen] = useState(false);
+  const [langSearch, setLangSearch] = useState("");
 
   const editorRef = useRef<any>(null);
   const monacoRef = useRef<any>(null);
@@ -140,10 +145,9 @@ export default function NotepadRoomPage() {
     if (!editorRef.current) return;
     const editor = editorRef.current;
     const tag = getNameTagPrefix();
-    const position = editor.getPosition();
     const selection = editor.getSelection();
 
-    if (position) {
+    if (selection) {
       editor.executeEdits("name-tag", [
         {
           range: selection,
@@ -222,14 +226,30 @@ export default function NotepadRoomPage() {
     }
   }, []);
 
-  // Initialize Real-Time Sync (Socket.IO WebSockets + 0ms SSE Stream + BroadcastChannel)
+  const userNameRef = useRef(userName);
+  const languageRef = useRef(language);
+  const autoTagLineRef = useRef(autoTagLine);
+
+  useEffect(() => {
+    userNameRef.current = userName;
+  }, [userName]);
+
+  useEffect(() => {
+    languageRef.current = language;
+  }, [language]);
+
+  useEffect(() => {
+    autoTagLineRef.current = autoTagLine;
+  }, [autoTagLine]);
+
+  // Initialize Real-Time Sync (Socket.IO WebSockets + SSE Stream + BroadcastChannel)
   useEffect(() => {
     if (!roomId) return;
 
     let eventSource: EventSource | null = null;
     let isSubscribed = true;
 
-    // 1. Setup True WebSockets via Socket.IO (Instant 0ms keystroke sync)
+    // 1. Setup True WebSockets via Socket.IO
     import("socket.io-client")
       .then(({ io }) => {
         if (!isSubscribed) return;
@@ -259,7 +279,7 @@ export default function NotepadRoomPage() {
       })
       .catch(() => {});
 
-    // 2. Setup local BroadcastChannel for instant same-machine cross-tab sync (0ms)
+    // 2. Setup local BroadcastChannel for instant same-machine cross-tab sync
     if (typeof window !== "undefined" && "BroadcastChannel" in window) {
       try {
         const bc = new BroadcastChannel(`anil6_room_${roomId}`);
@@ -278,7 +298,7 @@ export default function NotepadRoomPage() {
       } catch {}
     }
 
-    // 3. Setup Server-Sent Events (SSE) for instant serverless cloud synchronization
+    // 3. Setup Server-Sent Events (SSE) for instant synchronization
     if (typeof window !== "undefined" && "EventSource" in window) {
       try {
         const streamUrl = `/api/sync/${roomId}/stream?userId=${userId.current}&name=${encodeURIComponent(userName)}`;
@@ -358,7 +378,6 @@ export default function NotepadRoomPage() {
 
       if (isRemoteUpdate.current) return;
 
-      // 1. Instant Socket.IO WebSocket push to all connected users (0ms)
       if (socketRef.current) {
         socketRef.current.emit("code-change", {
           roomId,
@@ -366,7 +385,6 @@ export default function NotepadRoomPage() {
         });
       }
 
-      // 2. Broadcast to local tabs instantly (0ms)
       if (broadcastChannelRef.current) {
         broadcastChannelRef.current.postMessage({
           type: "code-update",
@@ -375,7 +393,6 @@ export default function NotepadRoomPage() {
         });
       }
 
-      // 3. Debounced Sync with Serverless API (instant response without overloading backend)
       if (syncTimeoutRef.current) {
         clearTimeout(syncTimeoutRef.current);
       }
@@ -424,11 +441,83 @@ export default function NotepadRoomPage() {
     }).catch(() => {});
   };
 
-  // Copy shareable link
+  // Reset to language template
+  const handleResetTemplate = () => {
+    const langObj = getLanguageById(language);
+    if (langObj.defaultCode) {
+      if (confirm(`Reset code to standard ${langObj.name} template?`)) {
+        handleCodeChange(langObj.defaultCode);
+      }
+    }
+  };
+
+  // Compile and Execute Code
+  const handleRunCode = useCallback(async () => {
+    if (isRunning) return;
+    setIsRunning(true);
+    setIsOutputOpen(true);
+
+    if (language === "html") {
+      setActiveOutputTab("preview");
+    } else {
+      setActiveOutputTab("output");
+    }
+
+    try {
+      const res = await executeCode(language, code, customInput);
+      setExecutionResult(res);
+    } catch (err: any) {
+      setExecutionResult({
+        stdout: "",
+        stderr: `Compilation / Execution error: ${err.message || "Unknown error"}`,
+        exitCode: 1,
+        executionTimeMs: 0,
+      });
+    } finally {
+      setIsRunning(false);
+    }
+  }, [isRunning, language, code, customInput]);
+
+  // Copy & Share room link
   const handleCopyLink = () => {
-    navigator.clipboard.writeText(window.location.href);
+    const url = typeof window !== "undefined" ? window.location.href : "";
+    setShareUrl(url);
+
+    let copied = false;
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard
+        .writeText(url)
+        .then(() => {
+          setCopiedLink(true);
+        })
+        .catch(() => {
+          fallbackCopyText(url);
+        });
+      copied = true;
+    }
+
+    if (!copied) {
+      fallbackCopyText(url);
+    }
+
+    setIsShareModalOpen(true);
     setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 2000);
+    setTimeout(() => setCopiedLink(false), 3000);
+  };
+
+  const fallbackCopyText = (text: string) => {
+    try {
+      const el = document.createElement("textarea");
+      el.value = text;
+      el.setAttribute("readonly", "");
+      el.style.position = "fixed";
+      el.style.left = "-9999px";
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand("copy");
+      document.body.removeChild(el);
+      setCopiedLink(true);
+    } catch {}
   };
 
   // Copy code
@@ -438,14 +527,23 @@ export default function NotepadRoomPage() {
     setTimeout(() => setCopiedCode(false), 2000);
   };
 
+  // Copy output terminal contents
+  const handleCopyOutput = () => {
+    if (!executionResult) return;
+    const text = executionResult.stdout || executionResult.stderr;
+    navigator.clipboard.writeText(text);
+    setCopiedOutput(true);
+    setTimeout(() => setCopiedOutput(false), 2000);
+  };
+
   // Download notepad code
   const handleDownload = () => {
-    const currentLangObj = LANGUAGES.find((l) => l.id === language) || LANGUAGES[0];
+    const currentLangObj = getLanguageById(language);
     const blob = new Blob([code], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${roomId}${currentLangObj.ext}`;
+    a.download = `${roomId}${currentLangObj.extension}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -459,27 +557,10 @@ export default function NotepadRoomPage() {
     }
   };
 
-  const userNameRef = useRef(userName);
-  const languageRef = useRef(language);
-  const autoTagLineRef = useRef(autoTagLine);
-
-  useEffect(() => {
-    userNameRef.current = userName;
-  }, [userName]);
-
-  useEffect(() => {
-    languageRef.current = language;
-  }, [language]);
-
-  useEffect(() => {
-    autoTagLineRef.current = autoTagLine;
-  }, [autoTagLine]);
-
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
 
-    // Fast and smooth editor settings
     editor.updateOptions({
       smoothScrolling: true,
       cursorSmoothCaretAnimation: "on",
@@ -488,14 +569,69 @@ export default function NotepadRoomPage() {
       tabSize: 2,
     });
 
+    // Register keyboard shortcuts to Compile & Run:
+    // 1. Ctrl+Enter / Cmd+Enter
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+      handleRunCode();
+    });
+
+    // 2. F9 (Dev-C++ / Code::Blocks / popular IDE shortcut)
+    editor.addCommand(monaco.KeyCode.F9, () => {
+      handleRunCode();
+    });
+
+    // 3. F11 (Compile & Run)
+    editor.addCommand(monaco.KeyCode.F11, () => {
+      handleRunCode();
+    });
+
+    // 4. F5 (VS Code / Visual Studio)
+    editor.addCommand(monaco.KeyCode.F5, () => {
+      handleRunCode();
+    });
+
+    // 5. Shift+F10 (IntelliJ / PyCharm)
+    editor.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.F10, () => {
+      handleRunCode();
+    });
+
+    // 6. Ctrl+F5 / Cmd+F5
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.F5, () => {
+      handleRunCode();
+    });
+
     // Add keyboard shortcut Alt+N to quickly insert author name tag
     editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.KeyN, () => {
       insertNameTag();
     });
   };
 
-  const currentLangName =
-    LANGUAGES.find((l) => l.id === language)?.name || "JavaScript";
+  // Global window keyboard shortcuts for running code anywhere on page (F9, F11, F5, Shift+F10, Ctrl+Enter)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isRunShortcut =
+        e.key === "F9" ||
+        e.key === "F11" ||
+        e.key === "F5" ||
+        (e.shiftKey && e.key === "F10") ||
+        ((e.ctrlKey || e.metaKey) && e.key === "Enter") ||
+        ((e.ctrlKey || e.metaKey) && e.key === "F5");
+
+      if (isRunShortcut) {
+        // Prevent default browser behavior (e.g. F5 browser reload, F11 fullscreen)
+        e.preventDefault();
+        e.stopPropagation();
+        handleRunCode();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [handleRunCode]);
+
+  const currentLangObj = getLanguageById(language);
 
   return (
     <div
@@ -505,16 +641,15 @@ export default function NotepadRoomPage() {
     >
       {/* anil6 Top Navigation Bar */}
       <header
-        className={`flex h-12 items-center justify-between px-4 select-none border-b shrink-0 z-30 ${
+        className={`flex h-12 items-center justify-between px-3 sm:px-4 select-none border-b shrink-0 relative z-40 gap-2 overflow-visible ${
           theme === "vs-dark"
             ? "bg-[#1e1e1e] border-[#333333] text-gray-200"
             : "bg-[#f8f9fa] border-[#e0e0e0] text-gray-800"
         }`}
       >
-        {/* Left: AM Logo and Anil6 Brand Name (Crisp & Blur-Free) */}
-        <div className="flex items-center gap-3">
-          <a href="/" className="flex items-center gap-2.5 group font-bold tracking-tight">
-            {/* Crisp Blur-Free AM Logo Avatar */}
+        {/* Left: AM Logo and Anil6 Brand Name */}
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          <a href="/" className="flex items-center gap-2 group font-bold tracking-tight">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-orange-600 border border-orange-400/60 text-white font-black text-sm tracking-wider select-none shadow-sm transition-transform duration-150 group-hover:scale-105">
               AM
             </div>
@@ -522,262 +657,166 @@ export default function NotepadRoomPage() {
               Anil<span className="text-orange-500 font-extrabold">6</span>
             </span>
           </a>
-
-          <div
-            className={`h-4 w-px ${
-              theme === "vs-dark" ? "bg-gray-700" : "bg-gray-300"
-            }`}
-          />
-
-          {/* Live Online Badge & Interactive User Details Popover */}
-          <div className="relative">
-            <button
-              onClick={() => setIsUsersModalOpen(!isUsersModalOpen)}
-              className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs border transition-all cursor-pointer select-none ${
-                theme === "vs-dark"
-                  ? "bg-[#25252b] border-[#383842] hover:bg-[#2e2e36] text-gray-200"
-                  : "bg-white border-gray-300 hover:bg-gray-50 text-gray-800"
-              }`}
-              title="Click to view live user information"
-            >
-              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-              <span className="text-[11px] font-medium hidden sm:inline">
-                {usersCount} {usersCount === 1 ? "user" : "users"} online
-              </span>
-              <span className="text-[11px] font-medium sm:hidden">
-                {usersCount} online
-              </span>
-              <ChevronDown
-                className={`h-3 w-3 opacity-60 transition-transform duration-150 ${
-                  isUsersModalOpen ? "rotate-180" : ""
-                }`}
-              />
-            </button>
-
-            {/* User Details Dropdown Popover */}
-            {isUsersModalOpen && (
-              <div
-                className={`absolute left-0 top-full mt-2 w-80 sm:w-96 rounded-xl border p-4 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-150 ${
-                  theme === "vs-dark"
-                    ? "bg-[#18181c] border-[#2e2e38] text-gray-200"
-                    : "bg-white border-gray-200 text-gray-800 shadow-xl"
-                }`}
-              >
-                {/* Popover Header */}
-                <div className="flex items-center justify-between pb-3 border-b border-[#2e2e38] mb-3">
-                  <div className="flex items-center gap-2">
-                    <Users className="h-4 w-4 text-orange-400" />
-                    <span className="font-bold text-xs text-white">
-                      Active Users in /{roomId} ({activeUsers.length || usersCount})
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => setIsUsersModalOpen(false)}
-                    className="p-1 rounded-md hover:bg-[#282830] text-gray-400 hover:text-white transition-colors cursor-pointer"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-
-                {/* Users List with Gmail & Verified Name */}
-                <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
-                  {activeUsers.length > 0 ? (
-                    activeUsers.map((u, idx) => {
-                      const isSelf = u.userId === userId.current;
-                      const displayName =
-                        u.name || (isSelf ? "You (Active)" : `User ${idx + 1}`);
-                      const displayEmail = u.email || null;
-                      const displayAvatar = u.avatar || null;
-
-                      return (
-                        <div
-                          key={u.userId || idx}
-                          className="rounded-lg bg-[#202026] border border-[#2a2a34] p-2.5 text-xs space-y-1.5"
-                        >
-                          {/* User Header */}
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <div className="h-6 w-6 rounded-full bg-orange-600 border border-orange-400/50 flex items-center justify-center text-white font-bold text-[10px] overflow-hidden shrink-0">
-                                {displayAvatar ? (
-                                  // eslint-disable-next-line @next/next/no-img-element
-                                  <img
-                                    src={displayAvatar}
-                                    alt={displayName}
-                                    className="h-full w-full object-cover"
-                                  />
-                                ) : (
-                                  displayName.charAt(0).toUpperCase()
-                                )}
-                              </div>
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="font-semibold text-white truncate max-w-[140px]">
-                                    {displayName}
-                                  </span>
-                                  {isSelf && (
-                                    <span className="text-[10px] text-orange-400 font-normal">
-                                      (You)
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-
-                            <span className="text-[10px] text-gray-400 font-mono shrink-0">
-                              {u.device === "Mobile"
-                                ? "📱 Mobile"
-                                : u.device === "Tablet"
-                                ? "📱 Tablet"
-                                : "🖥️ Desktop"}
-                            </span>
-                          </div>
-
-                          {/* Gmail Badge */}
-                          {displayEmail && (
-                            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-orange-500/10 border border-orange-500/20 text-orange-300 font-mono text-[11px] truncate">
-                              <Mail className="h-3 w-3 text-orange-400 shrink-0" />
-                              <span className="truncate">{displayEmail}</span>
-                            </div>
-                          )}
-
-                          {/* Location */}
-                          <div className="flex items-center gap-1.5 text-gray-300 text-[11px]">
-                            <MapPin className="h-3 w-3 text-orange-400 shrink-0" />
-                            <span>
-                              {u.city && u.city !== "Unknown" ? `${u.city}, ` : ""}
-                              {u.country || "Location detected"}
-                            </span>
-                            {u.region && u.region !== "Unknown" && (
-                              <span className="text-[10px] text-gray-500">
-                                ({u.region})
-                              </span>
-                            )}
-                          </div>
-
-                          {/* IP & System */}
-                          <div className="flex items-center justify-between text-[10px] text-gray-400 pt-1 border-t border-[#2a2a34]">
-                            <span className="font-mono text-gray-300">
-                              IP: {u.ip}
-                            </span>
-                            <span>
-                              {u.os} • {u.browser}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })
-                  ) : (
-                    <div className="rounded-lg bg-[#202026] border border-[#2a2a34] p-3 text-xs space-y-1.5">
-                      <div className="flex items-center gap-2">
-                        <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                        <span className="font-semibold text-white">You (Active)</span>
-                      </div>
-                      <p className="text-[11px] text-gray-400">
-                        Connected to room /{roomId}
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                {/* Popover Footer with Admin Link */}
-                <div className="mt-3 pt-3 border-t border-[#2e2e38] flex items-center justify-between text-xs">
-                  <span className="text-[11px] text-gray-400">
-                    Real-time session
-                  </span>
-                  <Link
-                    href="/admin"
-                    className="inline-flex items-center gap-1 text-orange-400 hover:text-orange-300 font-semibold text-[11px] transition-colors"
-                  >
-                    <span>Full Visitor Admin</span>
-                    <ExternalLink className="h-3 w-3" />
-                  </Link>
-                </div>
-              </div>
-            )}
-          </div>
         </div>
 
-        {/* Right: User Name, Tag Line, Language, Theme, Copy, Download, Clear, Share */}
-        <div className="flex items-center gap-2">
-          {/* User Name Badge & Quick Rename */}
-          <div className="relative">
-            {isEditingName ? (
-              <div className="flex items-center gap-1 bg-[#25252b] border border-orange-500/80 rounded-md px-2 py-0.5 shadow-sm">
-                <User className="h-3 w-3 text-orange-400" />
-                <input
-                  type="text"
-                  value={inputName}
-                  onChange={(e) => setInputName(e.target.value)}
-                  placeholder="Your Name"
-                  autoFocus
-                  maxLength={18}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handleSaveName();
-                    if (e.key === "Escape") setIsEditingName(false);
-                  }}
-                  className="bg-transparent text-xs text-white outline-none w-20 font-medium placeholder-gray-500"
-                />
-                <button
-                  onClick={handleSaveName}
-                  className="text-[10px] text-emerald-400 hover:text-emerald-300 font-bold px-1"
-                >
-                  Save
-                </button>
-              </div>
+        {/* Center / Right: Primary Compile Option & Language Controls */}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* COMPILE & RUN BUTTON (Prominent on Top) */}
+          <button
+            onClick={handleRunCode}
+            disabled={isRunning}
+            className="flex items-center gap-1.5 bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white font-bold px-3.5 py-1.5 rounded-lg text-xs shadow-md shadow-emerald-900/40 active:scale-95 transition-all disabled:opacity-50 cursor-pointer"
+            title="Compile and execute code (F9 / F11 / F5 / Ctrl+Enter)"
+          >
+            {isRunning ? (
+              <>
+                <div className="h-3.5 w-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                <span className="tracking-wide">Compiling...</span>
+              </>
             ) : (
-              <button
-                onClick={() => {
-                  setInputName(userName);
-                  setIsEditingName(true);
-                }}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border bg-orange-950/20 border-orange-500/30 hover:border-orange-500/60 hover:bg-orange-950/40 text-orange-300 transition-all cursor-pointer select-none"
-                title="Click to rename your typing name tag"
-              >
-                <div className="h-2 w-2 rounded-full bg-orange-500 shrink-0" />
-                <span className="font-semibold max-w-[90px] truncate">{userName}</span>
-                <span className="text-[10px] text-orange-400/60 font-normal hidden sm:inline">✎</span>
-              </button>
+              <>
+                <Play className="h-3.5 w-3.5 fill-white text-white" />
+                <span className="tracking-wide">Compile & Run</span>
+                <kbd className="hidden lg:inline-block ml-1 px-1 py-0.2 rounded bg-black/25 text-[10px] font-mono text-emerald-100/90 border border-white/20" title="Shortcuts: F9, F11, F5, Ctrl+Enter">
+                  F9 / Ctrl+↵
+                </kbd>
+              </>
             )}
-          </div>
+          </button>
 
-          {/* Language Selector Dropdown */}
+          {/* Boilerplate Template Reset Button */}
+          <button
+            onClick={handleResetTemplate}
+            className={`hidden sm:flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs border transition-colors cursor-pointer ${
+              theme === "vs-dark"
+                ? "bg-[#25252b] border-[#383842] hover:bg-[#2e2e36] text-gray-400 hover:text-gray-200"
+                : "bg-white border-gray-300 hover:bg-gray-100 text-gray-600"
+            }`}
+            title={`Reset to standard ${currentLangObj.name} boilerplate`}
+          >
+            <RotateCcw className="h-3 w-3" />
+            <span className="hidden lg:inline text-[11px]">Template</span>
+          </button>
+
+          {/* Language Selector Dropdown with Full Language Suite */}
           <div className="relative">
             <button
               onClick={() => setIsLangOpen(!isLangOpen)}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs border transition-colors ${
-                theme === "vs-dark"
-                  ? "bg-[#2d2d2d] border-[#3e3e42] hover:bg-[#383838] text-gray-200"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border font-semibold transition-all cursor-pointer shadow-sm ${
+                isLangOpen
+                  ? "border-blue-500 ring-2 ring-blue-500/30 bg-blue-600/10 text-blue-400"
+                  : theme === "vs-dark"
+                  ? "bg-[#25252b] border-[#383842] hover:bg-[#2e2e36] text-gray-200"
                   : "bg-white border-gray-300 hover:bg-gray-50 text-gray-700"
               }`}
+              title="Change programming language / compiler environment"
             >
-              <span>{currentLangName}</span>
-              <ChevronDown className="h-3 w-3 opacity-60" />
+              <FileCode className="h-3.5 w-3.5 text-blue-400" />
+              <span>{currentLangObj.name}</span>
+              <span className="text-[10px] font-mono text-gray-400 hidden sm:inline">
+                {currentLangObj.extension}
+              </span>
+              <ChevronDown
+                className={`h-3 w-3 opacity-60 transition-transform duration-150 ${
+                  isLangOpen ? "rotate-180" : ""
+                }`}
+              />
             </button>
 
             {isLangOpen && (
               <>
                 <div
-                  className="fixed inset-0 z-40"
+                  className="fixed inset-0 z-[100]"
                   onClick={() => setIsLangOpen(false)}
                 />
                 <div
-                  className={`absolute right-0 top-full mt-1 z-50 w-40 rounded shadow-xl border py-1 max-h-64 overflow-y-auto text-xs ${
+                  className={`absolute right-0 top-full mt-2 z-[101] w-64 rounded-xl shadow-2xl border p-2 text-xs backdrop-blur-xl animate-in fade-in zoom-in-95 duration-100 ${
                     theme === "vs-dark"
-                      ? "bg-[#252526] border-[#333333] text-gray-200"
-                      : "bg-white border-gray-200 text-gray-800"
+                      ? "bg-[#16161a] border-[#33333e] text-gray-200 shadow-black/90"
+                      : "bg-white border-gray-200 text-gray-800 shadow-xl"
                   }`}
                 >
-                  {LANGUAGES.map((lang) => (
-                    <button
-                      key={lang.id}
-                      onClick={() => handleLanguageChange(lang.id)}
-                      className={`w-full text-left px-3 py-1.5 hover:bg-blue-600 hover:text-white transition-colors ${
-                        language === lang.id ? "font-bold text-blue-500" : ""
+                  <div className="flex items-center justify-between px-2 py-1 mb-2 border-b border-gray-700/40">
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-gray-400">
+                      Languages & Compilers
+                    </span>
+                    <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded font-mono">
+                      {SUPPORTED_LANGUAGES.length} Available
+                    </span>
+                  </div>
+
+                  {/* Fast Search Input */}
+                  <div className="mb-2 px-1">
+                    <input
+                      type="text"
+                      placeholder="Search language (e.g. python, c++)..."
+                      value={langSearch}
+                      onChange={(e) => setLangSearch(e.target.value)}
+                      autoFocus
+                      className={`w-full px-2.5 py-1.5 rounded-lg text-xs outline-none border transition-all ${
+                        theme === "vs-dark"
+                          ? "bg-[#202026] border-[#383844] text-white placeholder-gray-500 focus:border-blue-500"
+                          : "bg-gray-100 border-gray-300 text-gray-900 placeholder-gray-400 focus:border-blue-500"
                       }`}
-                    >
-                      {lang.name}
-                    </button>
-                  ))}
+                    />
+                  </div>
+
+                  {/* Language Options List */}
+                  <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
+                    {SUPPORTED_LANGUAGES.filter(
+                      (l) =>
+                        l.name.toLowerCase().includes(langSearch.toLowerCase()) ||
+                        l.extension.toLowerCase().includes(langSearch.toLowerCase()) ||
+                        l.id.toLowerCase().includes(langSearch.toLowerCase())
+                    ).map((lang) => (
+                      <button
+                        key={lang.id}
+                        onClick={() => {
+                          handleLanguageChange(lang.id);
+                          setLangSearch("");
+                        }}
+                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-left text-xs transition-all cursor-pointer ${
+                          language === lang.id
+                            ? "bg-blue-600 text-white font-bold shadow-sm"
+                            : theme === "vs-dark"
+                            ? "hover:bg-[#25252f] text-gray-300 hover:text-white"
+                            : "hover:bg-gray-100 text-gray-700 hover:text-gray-900"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{lang.name}</span>
+                          {lang.supportsExecution && (
+                            <span
+                              className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-semibold ${
+                                language === lang.id
+                                  ? "bg-white/20 text-white"
+                                  : "bg-emerald-500/20 text-emerald-400"
+                              }`}
+                            >
+                              ▶ Run
+                            </span>
+                          )}
+                        </div>
+                        <span
+                          className={`text-[10px] font-mono ${
+                            language === lang.id ? "text-blue-100" : "text-gray-500"
+                          }`}
+                        >
+                          {lang.extension}
+                        </span>
+                      </button>
+                    ))}
+                    {SUPPORTED_LANGUAGES.filter(
+                      (l) =>
+                        l.name.toLowerCase().includes(langSearch.toLowerCase()) ||
+                        l.extension.toLowerCase().includes(langSearch.toLowerCase()) ||
+                        l.id.toLowerCase().includes(langSearch.toLowerCase())
+                    ).length === 0 && (
+                      <div className="p-3 text-center text-xs text-gray-400">
+                        No matching languages found
+                      </div>
+                    )}
+                  </div>
                 </div>
               </>
             )}
@@ -786,9 +825,9 @@ export default function NotepadRoomPage() {
           {/* Theme Toggle */}
           <button
             onClick={() => setTheme(theme === "vs-dark" ? "vs-light" : "vs-dark")}
-            className={`p-1.5 rounded text-xs border transition-colors ${
+            className={`p-1.5 rounded-lg text-xs border transition-colors cursor-pointer ${
               theme === "vs-dark"
-                ? "bg-[#2d2d2d] border-[#3e3e42] hover:bg-[#383838]"
+                ? "bg-[#25252b] border-[#383842] hover:bg-[#2e2e36]"
                 : "bg-white border-gray-300 hover:bg-gray-50"
             }`}
             title="Toggle theme"
@@ -800,49 +839,26 @@ export default function NotepadRoomPage() {
             )}
           </button>
 
-          {/* Copy Code Button */}
-          <button
-            onClick={handleCopyCode}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs border transition-colors ${
-              theme === "vs-dark"
-                ? "bg-[#2d2d2d] border-[#3e3e42] hover:bg-[#383838]"
-                : "bg-white border-gray-300 hover:bg-gray-50"
-            }`}
-            title="Copy text"
-          >
-            {copiedCode ? (
-              <>
-                <Check className="h-3 w-3 text-emerald-500" />
-                <span className="text-emerald-500">Copied</span>
-              </>
-            ) : (
-              <>
-                <Copy className="h-3 w-3 opacity-70" />
-                <span className="hidden sm:inline">Copy</span>
-              </>
-            )}
-          </button>
-
           {/* Download Button */}
           <button
             onClick={handleDownload}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs border transition-colors ${
+            className={`hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs border transition-colors cursor-pointer ${
               theme === "vs-dark"
-                ? "bg-[#2d2d2d] border-[#3e3e42] hover:bg-[#383838]"
+                ? "bg-[#25252b] border-[#383842] hover:bg-[#2e2e36]"
                 : "bg-white border-gray-300 hover:bg-gray-50"
             }`}
-            title="Download notepad"
+            title={`Download as ${currentLangObj.extension}`}
           >
             <Download className="h-3 w-3 opacity-70" />
-            <span className="hidden sm:inline">Download</span>
+            <span className="hidden md:inline">Download</span>
           </button>
 
           {/* Clear Button */}
           <button
             onClick={handleClear}
-            className={`p-1.5 rounded text-xs border transition-colors ${
+            className={`p-1.5 rounded-lg text-xs border transition-colors cursor-pointer ${
               theme === "vs-dark"
-                ? "bg-[#2d2d2d] border-[#3e3e42] hover:bg-red-950/40 hover:border-red-500/40 text-gray-400 hover:text-red-400"
+                ? "bg-[#25252b] border-[#383842] hover:bg-red-950/40 hover:border-red-500/40 text-gray-400 hover:text-red-400"
                 : "bg-white border-gray-300 hover:bg-red-50 text-gray-600 hover:text-red-600"
             }`}
             title="Clear notepad"
@@ -853,12 +869,12 @@ export default function NotepadRoomPage() {
           {/* Share Button (Primary) */}
           <button
             onClick={handleCopyLink}
-            className="flex items-center gap-1.5 bg-gradient-to-r from-orange-600 to-amber-500 hover:from-orange-500 hover:to-amber-400 text-white font-semibold px-3 py-1 rounded text-xs shadow-md shadow-orange-500/20 transition-all active:scale-95 cursor-pointer"
+            className="flex items-center gap-1.5 bg-gradient-to-r from-orange-600 to-amber-500 hover:from-orange-500 hover:to-amber-400 text-white font-semibold px-3 py-1.5 rounded-lg text-xs shadow-md shadow-orange-500/20 transition-all active:scale-95 cursor-pointer"
           >
             {copiedLink ? (
               <>
                 <Check className="h-3.5 w-3.5 text-white" />
-                <span>Link Copied!</span>
+                <span>Copied!</span>
               </>
             ) : (
               <>
@@ -870,59 +886,534 @@ export default function NotepadRoomPage() {
         </div>
       </header>
 
-      {/* Fullscreen Instant Real-Time Notepad with Full Photo Background */}
-      <main className="flex-1 w-full h-full relative overflow-hidden watermark-notepad">
-        {/* Full Notepad Photo Background */}
-        <div
-          className="absolute inset-0 pointer-events-none z-0 bg-cover bg-center bg-no-repeat"
-          style={{
-            backgroundImage: "url('/avengers-bg.jpg')",
-          }}
-          aria-hidden="true"
-        >
-          {/* Subtle Dark Overlay for Code Contrast & Readability */}
+      {/* Main Workspace Layout with Split-View Editor & Compilation Output Terminal */}
+      <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
+        {/* Monaco Editor Container */}
+        <main className="flex-1 h-full relative overflow-hidden watermark-notepad">
+          {/* Background Wallpaper */}
           <div
-            className={`w-full h-full ${
-              theme === "vs-dark"
-                ? "bg-black/60 backdrop-blur-[0.5px]"
-                : "bg-white/70 backdrop-blur-[0.5px]"
+            className="absolute inset-0 pointer-events-none z-0 bg-cover bg-center bg-no-repeat"
+            style={{
+              backgroundImage: "url('/avengers-bg.jpg')",
+            }}
+            aria-hidden="true"
+          >
+            <div
+              className={`w-full h-full ${
+                theme === "vs-dark"
+                  ? "bg-black/60 backdrop-blur-[0.5px]"
+                  : "bg-white/70 backdrop-blur-[0.5px]"
+              }`}
+            />
+          </div>
+
+          <div className="relative z-10 w-full h-full">
+            <Editor
+              height="100%"
+              width="100%"
+              language={currentLangObj.monacoLanguage || language}
+              value={code}
+              theme={theme}
+              onMount={handleEditorMount}
+              onChange={(val) => handleCodeChange(val || "")}
+              options={{
+                fontSize: 15,
+                lineNumbers: "on",
+                wordWrap: "on",
+                automaticLayout: true,
+                fontFamily:
+                  "'Fira Code', 'JetBrains Mono', Consolas, 'Courier New', monospace",
+                fontLigatures: true,
+                minimap: { enabled: false },
+                scrollBeyondLastLine: false,
+                padding: { top: 16, bottom: 16 },
+                cursorBlinking: "smooth",
+                cursorSmoothCaretAnimation: "on",
+                bracketPairColorization: { enabled: true },
+                renderLineHighlight: "all",
+              }}
+              loading={
+                <div className="flex h-full w-full items-center justify-center text-sm font-mono text-gray-400">
+                  Loading editor...
+                </div>
+              }
+            />
+          </div>
+        </main>
+
+        {/* Slide-Up / Dockable Compilation Output Terminal Panel */}
+        {isOutputOpen && (
+          <aside
+            className={`flex flex-col border-t md:border-t-0 md:border-l border-[#333333] shadow-2xl z-20 transition-all duration-200 ${
+              theme === "vs-dark" ? "bg-[#0f1319] text-gray-200" : "bg-[#f8f9fa] text-gray-800"
+            } ${
+              isOutputExpanded
+                ? "h-full md:w-1/2 w-full"
+                : "h-72 md:h-full md:w-96 w-full"
             }`}
-          />
+          >
+            {/* Output Panel Header */}
+            <div
+              className={`flex items-center justify-between px-3 py-2 border-b text-xs shrink-0 select-none ${
+                theme === "vs-dark"
+                  ? "bg-[#161b22] border-[#2b313a]"
+                  : "bg-[#e9ecef] border-gray-300"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Terminal className="h-3.5 w-3.5 text-emerald-400" />
+                <span className="font-bold">Output Console</span>
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                  {currentLangObj.name}
+                </span>
+
+                {executionResult && (
+                  <div className="flex items-center gap-1.5 ml-1">
+                    {executionResult.exitCode === 0 ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-400 border border-emerald-500/30">
+                        <CheckCircle2 className="h-3 w-3" />
+                        Success
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-400 border border-red-500/30">
+                        <AlertTriangle className="h-3 w-3" />
+                        Exit {executionResult.exitCode}
+                      </span>
+                    )}
+
+                    {executionResult.executionTimeMs !== undefined && (
+                      <span className="hidden sm:inline-flex items-center gap-0.5 text-[10px] text-gray-400">
+                        <Clock className="h-3 w-3" />
+                        {executionResult.executionTimeMs}ms
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Panel Header Controls */}
+              <div className="flex items-center gap-1">
+                {/* HTML Mode Tab Switcher */}
+                {language === "html" && (
+                  <div className="flex items-center bg-[#21262d] p-0.5 rounded-lg border border-[#30363d] mr-1">
+                    <button
+                      onClick={() => setActiveOutputTab("output")}
+                      className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
+                        activeOutputTab === "output"
+                          ? "bg-blue-600 text-white"
+                          : "text-gray-400 hover:text-white"
+                      }`}
+                    >
+                      Raw
+                    </button>
+                    <button
+                      onClick={() => setActiveOutputTab("preview")}
+                      className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors flex items-center gap-1 cursor-pointer ${
+                        activeOutputTab === "preview"
+                          ? "bg-blue-600 text-white"
+                          : "text-gray-400 hover:text-white"
+                      }`}
+                    >
+                      <Eye className="h-3 w-3" />
+                      Live Preview
+                    </button>
+                  </div>
+                )}
+
+                {/* Copy Output Button */}
+                {executionResult && (
+                  <button
+                    onClick={handleCopyOutput}
+                    className="p-1 rounded text-gray-400 hover:text-white hover:bg-gray-700/40 transition-colors cursor-pointer"
+                    title="Copy terminal output"
+                  >
+                    {copiedOutput ? (
+                      <Check className="h-3.5 w-3.5 text-emerald-400" />
+                    ) : (
+                      <Copy className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                )}
+
+                {/* Clear Output */}
+                <button
+                  onClick={() => setExecutionResult(null)}
+                  className="p-1 rounded text-gray-400 hover:text-white hover:bg-gray-700/40 transition-colors cursor-pointer"
+                  title="Clear output"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+
+                {/* Expand / Minimize Width Toggle (Desktop) */}
+                <button
+                  onClick={() => setIsOutputExpanded(!isOutputExpanded)}
+                  className="hidden md:block p-1 rounded text-gray-400 hover:text-white hover:bg-gray-700/40 transition-colors cursor-pointer"
+                  title={isOutputExpanded ? "Standard width" : "Expand width"}
+                >
+                  {isOutputExpanded ? (
+                    <Minimize2 className="h-3.5 w-3.5" />
+                  ) : (
+                    <Maximize2 className="h-3.5 w-3.5" />
+                  )}
+                </button>
+
+                {/* Close Output Panel */}
+                <button
+                  onClick={() => setIsOutputOpen(false)}
+                  className="p-1 rounded text-gray-400 hover:text-white hover:bg-gray-700/40 transition-colors cursor-pointer"
+                  title="Close console"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Custom Input (stdin) Section for interactive programs like Python input(), C++ cin, etc. */}
+            <div className="border-b border-[#21262d] bg-[#0d1117] px-3 py-2 text-xs shrink-0">
+              <div className="flex items-center justify-between">
+                <button
+                  onClick={() => setShowCustomInput(!showCustomInput)}
+                  className="flex items-center gap-1.5 font-semibold text-gray-300 hover:text-emerald-400 transition-colors cursor-pointer text-[11px]"
+                  title="Toggle Custom Input (stdin) for input(), cin, Scanner"
+                >
+                  <Terminal className="h-3 w-3 text-emerald-400" />
+                  <span>Custom Input (stdin)</span>
+                  <span className="text-[10px] text-gray-500 font-normal">
+                    {showCustomInput ? "▲ hide" : "▼ enter input"}
+                  </span>
+                  {customInput.trim() && (
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  )}
+                </button>
+                <div className="flex items-center gap-2">
+                  {customInput && (
+                    <button
+                      onClick={() => setCustomInput("")}
+                      className="text-[10px] text-gray-500 hover:text-red-400 transition-colors cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  )}
+                  <button
+                    onClick={handleRunCode}
+                    disabled={isRunning}
+                    className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-2 py-0.5 rounded text-[10px] transition-all cursor-pointer disabled:opacity-50"
+                    title="Run with this input"
+                  >
+                    <Play className="h-2.5 w-2.5 fill-white" />
+                    <span>Run</span>
+                  </button>
+                </div>
+              </div>
+              {showCustomInput && (
+                <div className="mt-1.5">
+                  <textarea
+                    value={customInput}
+                    onChange={(e) => setCustomInput(e.target.value)}
+                    placeholder="Enter input here (e.g. for input(), cin, Scanner). For multiple inputs, put each on a new line."
+                    rows={2}
+                    className="w-full bg-[#161b22] border border-[#30363d] focus:border-emerald-500/60 rounded-md p-2 text-xs font-mono text-gray-200 placeholder-gray-500 focus:outline-none resize-y transition-colors"
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Output Panel Body */}
+            <div className="flex-1 p-3 overflow-auto font-mono text-xs select-text bg-[#090d13]">
+              {isRunning ? (
+                <div className="flex flex-col items-center justify-center h-full gap-2.5 text-gray-400">
+                  <div className="h-7 w-7 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin" />
+                  <span className="text-xs font-semibold text-emerald-400">
+                    Compiling & running {currentLangObj.name}...
+                  </span>
+                  <span className="text-[11px] text-gray-500">
+                    Communicating with sandbox runtime
+                  </span>
+                </div>
+              ) : language === "html" && activeOutputTab === "preview" ? (
+                <div className="w-full h-full rounded-lg bg-white overflow-hidden shadow-inner flex flex-col">
+                  <iframe
+                    srcDoc={code}
+                    title="Live HTML Preview"
+                    className="w-full h-full border-0"
+                    sandbox="allow-scripts"
+                  />
+                </div>
+              ) : executionResult ? (
+                <div className="space-y-3">
+                  {/* Visual Data Table Rendering for SQL Queries */}
+                  {executionResult.sqlResults && executionResult.sqlResults.length > 0 ? (
+                    <div className="space-y-3">
+                      {executionResult.sqlResults.map((res, i) => (
+                        <div
+                          key={i}
+                          className="rounded-xl bg-[#0e131d] border border-[#232a3b] overflow-hidden shadow-lg"
+                        >
+                          <div className="flex items-center justify-between px-3 py-2 bg-[#141b29] border-b border-[#232a3b]">
+                            <div className="flex items-center gap-2 overflow-hidden">
+                              <span className="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 text-[10px] font-mono font-bold">
+                                Query #{i + 1}
+                              </span>
+                              <span
+                                className="text-[11px] font-mono text-gray-300 truncate max-w-[200px] sm:max-w-xs"
+                                title={res.query}
+                              >
+                                {res.query.split("\n")[0]}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {res.isSelect ? (
+                                <span className="text-[10px] font-mono bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-semibold">
+                                  {res.rowCount} {res.rowCount === 1 ? "row" : "rows"}
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-mono bg-blue-500/15 text-blue-300 border border-blue-500/30 px-2 py-0.5 rounded-full font-medium">
+                                  {res.rowCount} affected
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {res.isSelect && res.headers && res.rows ? (
+                            <div className="w-full overflow-x-auto">
+                              <table className="w-full text-left border-collapse text-xs font-mono min-w-full">
+                                <thead>
+                                  <tr className="bg-[#182133] border-b border-[#2d374d]">
+                                    <th className="py-2 px-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider border-r border-[#232a3b] w-10 text-center select-none bg-[#141b29]">
+                                      #
+                                    </th>
+                                    {res.headers.map((h, hIdx) => (
+                                      <th
+                                        key={hIdx}
+                                        className="py-2 px-3 text-[11px] font-bold text-cyan-300 border-r border-[#232a3b] last:border-r-0 whitespace-nowrap bg-[#182133]"
+                                      >
+                                        {h}
+                                      </th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {res.rows.length === 0 ? (
+                                    <tr>
+                                      <td
+                                        colSpan={res.headers.length + 1}
+                                        className="py-4 text-center text-gray-500 italic bg-[#0b0f17]"
+                                      >
+                                        (0 rows returned)
+                                      </td>
+                                    </tr>
+                                  ) : (
+                                    res.rows.map((row, rIdx) => (
+                                      <tr
+                                        key={rIdx}
+                                        className={`border-b border-[#1b2233] transition-colors hover:bg-cyan-950/20 ${
+                                          rIdx % 2 === 0 ? "bg-[#0b0f17]" : "bg-[#0f1420]"
+                                        }`}
+                                      >
+                                        <td className="py-2 px-3 text-[10px] text-gray-500 border-r border-[#1b2233] text-center select-none">
+                                          {rIdx + 1}
+                                        </td>
+                                        {row.map((cell, cIdx) => (
+                                          <td
+                                            key={cIdx}
+                                            className={`py-2 px-3 text-xs border-r border-[#1b2233] last:border-r-0 whitespace-nowrap ${
+                                              cell === "NULL"
+                                                ? "text-gray-500 italic"
+                                                : "text-gray-200"
+                                            }`}
+                                          >
+                                            {cell}
+                                          </td>
+                                        ))}
+                                      </tr>
+                                    ))
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : (
+                            <div className="p-3 text-xs font-mono text-emerald-300 flex items-center gap-2 bg-[#0b0f17]">
+                              <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                              <span>{res.message || "Query executed successfully"}</span>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    executionResult.stdout && (
+                      <div className="rounded-lg bg-emerald-950/10 border border-emerald-500/20 p-3">
+                        <div className="text-[10px] text-emerald-500 font-bold uppercase tracking-wider mb-1">
+                          Standard Output
+                        </div>
+                        <pre className="text-emerald-300 whitespace-pre leading-relaxed font-mono overflow-x-auto selection:bg-emerald-800/40">
+                          {executionResult.stdout}
+                        </pre>
+                      </div>
+                    )
+                  )}
+
+                  {executionResult.stderr && (
+                    <div className="rounded-lg bg-red-950/30 border border-red-500/30 p-3">
+                      <div className="text-[10px] text-red-400 font-bold uppercase tracking-wider mb-1 flex items-center gap-1">
+                        <AlertTriangle className="h-3 w-3" />
+                        Compiler / Runtime Diagnostic
+                      </div>
+                      <pre className="text-red-300 whitespace-pre leading-relaxed font-mono overflow-x-auto selection:bg-red-800/40">
+                        {executionResult.stderr}
+                      </pre>
+                    </div>
+                  )}
+
+                  {!executionResult.stdout && !executionResult.stderr && (!executionResult.sqlResults || executionResult.sqlResults.length === 0) && (
+                    <div className="text-gray-400 italic p-3 text-center">
+                      Program finished successfully with no standard output (Exit Code: {executionResult.exitCode}).
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center h-full text-center text-gray-500 gap-2 p-4">
+                  <Terminal className="h-8 w-8 text-gray-600 mb-1" />
+                  <p className="text-xs font-semibold text-gray-300">
+                    No compilation results yet
+                  </p>
+                  <p className="text-[11px] text-gray-500 max-w-xs leading-relaxed">
+                    Click the green <span className="text-emerald-400 font-semibold">Compile & Run</span> button at the top or press <kbd className="px-1.5 py-0.5 rounded bg-gray-800 border border-gray-700 text-gray-300 font-mono text-[10px]">F9</kbd>, <kbd className="px-1.5 py-0.5 rounded bg-gray-800 border border-gray-700 text-gray-300 font-mono text-[10px]">F11</kbd> or <kbd className="px-1.5 py-0.5 rounded bg-gray-800 border border-gray-700 text-gray-300 font-mono text-[10px]">Ctrl+Enter</kbd> to execute your {currentLangObj.name} code.
+                  </p>
+                </div>
+              )}
+            </div>
+          </aside>
+        )}
+      </div>
+
+      {/* Bottom Status Bar */}
+      <footer
+        className={`h-7 border-t px-3 flex items-center justify-between text-[11px] font-mono select-none z-30 shrink-0 ${
+          theme === "vs-dark"
+            ? "bg-[#18181c] border-[#2e2e38] text-gray-400"
+            : "bg-[#f1f3f5] border-[#dee2e6] text-gray-600"
+        }`}
+      >
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleRunCode}
+            disabled={isRunning}
+            className="flex items-center gap-1.5 text-emerald-400 hover:text-emerald-300 font-bold cursor-pointer"
+            title="Compile and run code (F9 / F11 / F5 / Ctrl+Enter)"
+          >
+            <Play className="h-2.5 w-2.5 fill-emerald-400" />
+            <span>Run Code (F9 / Ctrl+↵)</span>
+          </button>
+          <span className="opacity-30">|</span>
+          <span className="flex items-center gap-1 text-[10px]">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span>Room: /{roomId}</span>
+          </span>
         </div>
 
-        <div className="relative z-10 w-full h-full">
-          <Editor
-            height="100%"
-            width="100%"
-            language={language}
-            value={code}
-            theme={theme}
-            onMount={handleEditorMount}
-            onChange={(val) => handleCodeChange(val || "")}
-            options={{
-              fontSize: 15,
-              lineNumbers: "on",
-              wordWrap: "on",
-              automaticLayout: true,
-              fontFamily:
-                "'Fira Code', 'JetBrains Mono', Consolas, 'Courier New', monospace",
-              fontLigatures: true,
-              minimap: { enabled: false },
-              scrollBeyondLastLine: false,
-              padding: { top: 16, bottom: 16 },
-              cursorBlinking: "smooth",
-              cursorSmoothCaretAnimation: "on",
-              bracketPairColorization: { enabled: true },
-              renderLineHighlight: "all",
-            }}
-            loading={
-              <div className="flex h-full w-full items-center justify-center text-sm font-mono text-gray-400">
-                Loading notepad...
-              </div>
-            }
-          />
+        <div className="flex items-center gap-3 text-[10px]">
+          <span className="hidden sm:inline">UTF-8</span>
+          <span className="opacity-30 hidden sm:inline">|</span>
+          <span className="font-semibold text-blue-400">{currentLangObj.name}</span>
+          <span className="opacity-30">|</span>
+          <button
+            onClick={() => setIsOutputOpen(!isOutputOpen)}
+            className="hover:text-blue-400 font-medium transition-colors cursor-pointer flex items-center gap-1"
+          >
+            <Terminal className="h-3 w-3" />
+            <span>Console Output</span>
+          </button>
         </div>
-      </main>
+      </footer>
+
+      {/* Share Workspace Modal */}
+      {isShareModalOpen && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
+          <div
+            className="fixed inset-0"
+            onClick={() => setIsShareModalOpen(false)}
+          />
+          <div className="relative w-full max-w-md bg-[#161b22] border border-[#30363d] rounded-2xl shadow-2xl p-5 z-10 space-y-4">
+            <div className="flex items-center justify-between border-b border-[#30363d] pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="h-9 w-9 rounded-xl bg-orange-600/20 border border-orange-500/40 flex items-center justify-center text-orange-400 shrink-0">
+                  <Share2 className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Share Workspace</h3>
+                  <p className="text-[11px] text-gray-400">Collaborate with anyone in real time</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsShareModalOpen(false)}
+                className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[11px] font-semibold text-gray-300">Room Link</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  value={shareUrl || (typeof window !== "undefined" ? window.location.href : "")}
+                  className="flex-1 bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-xs font-mono text-gray-200 outline-none select-all focus:border-orange-500"
+                  onClick={(e) => (e.target as HTMLInputElement).select()}
+                />
+                <button
+                  onClick={handleCopyLink}
+                  className="flex items-center gap-1.5 bg-gradient-to-r from-orange-600 to-amber-500 hover:from-orange-500 hover:to-amber-400 text-white font-semibold px-3 py-2 rounded-lg text-xs transition-all active:scale-95 cursor-pointer shrink-0"
+                >
+                  {copiedLink ? (
+                    <>
+                      <Check className="h-3.5 w-3.5 text-white" />
+                      <span>Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-3.5 w-3.5" />
+                      <span>Copy</span>
+                    </>
+                  )}
+                </button>
+              </div>
+              {copiedLink && (
+                <p className="text-[11px] text-emerald-400 flex items-center gap-1 font-medium">
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  Link copied to clipboard!
+                </p>
+              )}
+            </div>
+
+            <div className="pt-2 border-t border-[#30363d] flex items-center justify-between text-xs">
+              <a
+                href={`https://api.whatsapp.com/send?text=${encodeURIComponent("Join my collaborative code session on Anil6: " + (typeof window !== "undefined" ? window.location.href : ""))}`}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#21262d] hover:bg-[#30363d] text-emerald-400 font-medium transition-colors cursor-pointer"
+              >
+                <span>WhatsApp</span>
+              </a>
+              <a
+                href={`mailto:?subject=${encodeURIComponent("Join my Anil6 coding session")}&body=${encodeURIComponent("Join my real-time collaborative workspace: " + (typeof window !== "undefined" ? window.location.href : ""))}`}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#21262d] hover:bg-[#30363d] text-blue-400 font-medium transition-colors cursor-pointer"
+              >
+                <span>Email</span>
+              </a>
+              <button
+                onClick={() => window.open(window.location.href, "_blank")}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#21262d] hover:bg-[#30363d] text-gray-300 font-medium transition-colors cursor-pointer"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                <span>New Tab</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
