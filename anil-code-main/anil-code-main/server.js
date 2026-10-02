@@ -20,11 +20,8 @@ const rooms = new Map();
 
 function getOrInitRoom(roomId) {
   if (!rooms.has(roomId)) {
-    const defaultCode =
-      "// Welcome to Anil-code!\n// Collaborate on code and notes in real time.\n\nfunction helloWorld() {\n  console.log('Hello from Anil-code!');\n}\n\nhelloWorld();\n";
-
     rooms.set(roomId, {
-      code: defaultCode,
+      code: "",
       language: "javascript",
       users: new Map(),
     });

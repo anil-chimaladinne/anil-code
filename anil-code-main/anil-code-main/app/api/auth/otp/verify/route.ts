@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
         email: cleanTarget,
         name: userName,
         avatar,
-        provider: isEmail ? "google" : "custom",
+        provider: cleanTarget.includes("@") ? "google" : "custom",
       },
       log,
     });

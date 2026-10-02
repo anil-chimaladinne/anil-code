@@ -1,5 +1,9 @@
 import { NextRequest } from "next/server";
-import { getOrInitRoom, subscribeRoom, unsubscribeRoom } from "../route";
+import {
+  getOrInitRoom,
+  subscribeRoom,
+  unsubscribeRoom,
+} from "@/lib/room-store";
 
 export const dynamic = "force-dynamic";
 
@@ -9,7 +13,6 @@ export async function GET(
 ) {
   const { roomId } = params;
   const userId = req.nextUrl.searchParams.get("userId") || "anon";
-  const userName = req.nextUrl.searchParams.get("name") || "User";
 
   const room = getOrInitRoom(roomId);
 
