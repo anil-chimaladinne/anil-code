@@ -267,24 +267,31 @@ body {
     extension: ".sql",
     monacoLanguage: "sql",
     supportsExecution: true,
-    defaultCode: `-- SQL Playground (SQLite In-Memory Engine)
-CREATE TABLE users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    role TEXT DEFAULT 'developer',
-    email TEXT UNIQUE
-);
+    defaultCode: `-- SQL Playground (In-Memory SQLite Engine)
+-- Pre-seeded sample tables 'users' and 'products' are ready to query immediately!
 
-INSERT INTO users (name, role, email) VALUES
-('Anil', 'Admin', 'anil@example.com'),
-('Alex', 'Developer', 'alex@example.com'),
-('Sarah', 'Designer', 'sarah@example.com');
-
--- Query all users
+-- 1. Query the pre-loaded users table
 SELECT * FROM users;
 
--- Filter query
-SELECT name, role FROM users WHERE role = 'Developer';
+-- 2. Query pre-loaded products table with filter & sort
+SELECT name, category, price, stock 
+FROM products 
+WHERE price < 200 
+ORDER BY price ASC;
+
+-- 3. Create your own custom tables, insert rows, and run queries!
+CREATE TABLE departments (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    budget INTEGER
+);
+
+INSERT INTO departments VALUES
+(1, 'Engineering', 250000),
+(2, 'Design', 120000),
+(3, 'Marketing', 90000);
+
+SELECT * FROM departments;
 `,
   },
   {
@@ -309,7 +316,12 @@ Collaborate in real time with classmates and developers.
 ];
 
 export function getLanguageById(id: string): LanguageConfig {
-  const found = SUPPORTED_LANGUAGES.find((lang) => lang.id === id);
+  const cleanId = (id || "").toLowerCase().trim();
+  const found = SUPPORTED_LANGUAGES.find(
+    (lang) =>
+      lang.id.toLowerCase() === cleanId ||
+      lang.name.toLowerCase() === cleanId
+  );
   return found || SUPPORTED_LANGUAGES[0];
 }
 

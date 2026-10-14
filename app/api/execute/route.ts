@@ -6,6 +6,7 @@ import path from "path";
 import os from "os";
 import vm from "vm";
 import ts from "typescript";
+import initSqlJs from "sql.js";
 
 // Helper to execute Python locally in an isolated child process with timeout
 async function runLocalPython(
@@ -68,7 +69,6 @@ async function runLocalPython(
       try {
         if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
       } catch {}
-      // If local python is not found on path, resolve null so fallback runner takes over
       resolve({
         stdout: "",
         stderr: "__LOCAL_PY_NOT_FOUND__",
@@ -148,7 +148,7 @@ async function runNodeVm(
   });
 }
 
-// Wandbox API integration for C++, C, Rust, Go, Java, Python
+// Wandbox API integration for C++, C, Rust, Go, Java, Python, and remote SQLite fallback
 async function runWandbox(
   compiler: string,
   code: string,
@@ -201,172 +201,245 @@ async function runWandbox(
   }
 }
 
-// Helper to execute SQL queries in a real in-memory SQLite sandbox
-async function runSqlInSQLite(
+// Lazy-initialized sql.js instance for ultra-fast, zero-dependency in-memory SQLite
+let sqlJsInstancePromise: Promise<any> | null = null;
+function getSqlEngine() {
+  if (!sqlJsInstancePromise) {
+    try {
+      const initFn =
+        typeof initSqlJs === "function"
+          ? initSqlJs
+          : (initSqlJs as any).default || initSqlJs;
+
+      const wasmPath = path.join(
+        process.cwd(),
+        "node_modules",
+        "sql.js",
+        "dist",
+        "sql-wasm.wasm"
+      );
+      if (fs.existsSync(wasmPath)) {
+        const wasmBinary = fs.readFileSync(wasmPath);
+        sqlJsInstancePromise = initFn({ wasmBinary });
+      } else {
+        sqlJsInstancePromise = initFn();
+      }
+    } catch (err) {
+      console.error("[sql.js init error]:", err);
+      const initFn =
+        typeof initSqlJs === "function"
+          ? initSqlJs
+          : (initSqlJs as any).default || initSqlJs;
+      sqlJsInstancePromise = initFn();
+    }
+  }
+  return sqlJsInstancePromise;
+}
+
+// ASCII table formatter for CLI / text terminal display
+function formatSqlTable(headers: string[], rows: any[][]): string {
+  if (!headers || headers.length === 0) return "";
+  const colWidths = headers.map((h, i) => {
+    let max = String(h).length;
+    for (const r of rows) {
+      const val = r[i] === null || r[i] === undefined ? "NULL" : String(r[i]);
+      if (val.length > max) max = val.length;
+    }
+    return max;
+  });
+
+  const sep = "+" + colWidths.map((w) => "-".repeat(w + 2)).join("+") + "+";
+  const headerLine =
+    "|" +
+    headers.map((h, i) => ` ${String(h).padEnd(colWidths[i])} `).join("|") +
+    "|";
+  const lines = [sep, headerLine, sep];
+
+  for (const r of rows) {
+    const rowLine =
+      "|" +
+      r
+        .map((val, i) => {
+          const str = val === null || val === undefined ? "NULL" : String(val);
+          return ` ${str.padEnd(colWidths[i])} `;
+        })
+        .join("|") +
+      "|";
+    lines.push(rowLine);
+  }
+  lines.push(sep);
+  return lines.join("\n");
+}
+
+// In-Memory SQLite execution with pre-seeded sample data & multi-statement query support
+async function runSqlQueries(
   sqlCode: string
 ): Promise<{ stdout: string; stderr: string; exitCode: number; sqlResults?: any[] }> {
-  const runnerScript = `
-import sqlite3, sys, json
+  try {
+    const SQL = await getSqlEngine();
+    const db = new SQL.Database();
 
-if hasattr(sys.stdout, 'reconfigure'):
-    sys.stdout.reconfigure(encoding='utf-8')
-if hasattr(sys.stderr, 'reconfigure'):
-    sys.stderr.reconfigure(encoding='utf-8')
+    // Check if the user's code already defines 'users' or 'products' to avoid name collision
+    const userCreatesUsers = /\bcreate\s+table\s+(if\s+not\s+exists\s+)?users\b/i.test(sqlCode);
+    const userCreatesProducts = /\bcreate\s+table\s+(if\s+not\s+exists\s+)?products\b/i.test(sqlCode);
 
-conn = sqlite3.connect(':memory:')
-cur = conn.cursor()
-
-def format_table(headers, rows):
-    if not headers:
-        return ""
-    col_widths = [len(str(h)) for h in headers]
-    for row in rows:
-        for i, val in enumerate(row):
-            v_str = 'NULL' if val is None else str(val)
-            col_widths[i] = max(col_widths[i], len(v_str))
-    sep = '+' + '+'.join('-' * (w + 2) for w in col_widths) + '+'
-    head_line = '|' + '|'.join(f' {str(h):<{col_widths[i]}} ' for i, h in enumerate(headers)) + '|'
-    lines = [sep, head_line, sep]
-    for row in rows:
-        cells = []
-        for i, val in enumerate(row):
-            v_str = 'NULL' if val is None else str(val)
-            cells.append(f' {v_str:<{col_widths[i]}} ')
-        lines.append('|' + '|'.join(cells) + '|')
-    lines.append(sep)
-    return '\\n'.join(lines)
-
-raw_code = sys.stdin.read()
-statements = [s.strip() for s in raw_code.split(';') if s.strip()]
-
-if not statements:
-    print("No executable SQL statements found.")
-    sys.exit(0)
-
-output = []
-sql_results = []
-for idx, stmt in enumerate(statements, 1):
-    lines = [l for l in stmt.splitlines() if not l.strip().startswith('--')]
-    clean_stmt = '\\n'.join(lines).strip()
-    if not clean_stmt:
-        continue
-    first_line = clean_stmt.splitlines()[0]
-    if len(first_line) > 65:
-        first_line = first_line[:62] + '...'
-
-    try:
-        cur.execute(clean_stmt)
-        if cur.description:
-            headers = [d[0] for d in cur.description]
-            raw_rows = cur.fetchall()
-            str_rows = [[str(v) if v is not None else 'NULL' for v in row] for row in raw_rows]
-            sql_results.append({
-                'query': clean_stmt,
-                'isSelect': True,
-                'headers': headers,
-                'rows': str_rows,
-                'rowCount': len(raw_rows)
-            })
-            output.append(f"-- Query [{idx}]: {first_line}")
-            output.append(format_table(headers, raw_rows))
-            output.append(f"({len(raw_rows)} row(s) returned)\\n")
-        else:
-            conn.commit()
-            rows_aff = cur.rowcount if cur.rowcount >= 0 else 0
-            sql_results.append({
-                'query': clean_stmt,
-                'isSelect': False,
-                'rowCount': rows_aff,
-                'message': f"Executed successfully ({rows_aff} row(s) affected)"
-            })
-            output.append(f"[OK] Query [{idx}]: {first_line} ({rows_aff} row(s) affected)\\n")
-    except sqlite3.OperationalError as e:
-        sys.stderr.write(f"SQL Error in statement [{idx}]:\\n  {first_line}\\n--> SQLite Error: {e}\\n")
-        sys.exit(1)
-    except Exception as e:
-        sys.stderr.write(f"Error in statement [{idx}]:\\n  {first_line}\\n--> {e}\\n")
-        sys.exit(1)
-
-print('__SQL_JSON_START__' + json.dumps(sql_results) + '__SQL_JSON_END__')
-print('\\n'.join(output))
-`;
-
-  return new Promise((resolve) => {
-    const tempDir = os.tmpdir();
-    const tempFile = path.join(
-      tempDir,
-      `sql_runner_${Date.now()}_${Math.random().toString(36).slice(2)}.py`
-    );
-
-    try {
-      fs.writeFileSync(tempFile, runnerScript, "utf-8");
-    } catch (err: any) {
-      return resolve({
-        stdout: "",
-        stderr: `File system error: ${err.message}`,
-        exitCode: 1,
-      });
+    if (!userCreatesUsers) {
+      db.run(`
+        CREATE TABLE IF NOT EXISTS users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          role TEXT DEFAULT 'developer',
+          email TEXT UNIQUE
+        );
+        INSERT OR IGNORE INTO users (id, name, role, email) VALUES
+          (1, 'Anil', 'Admin', 'anil@example.com'),
+          (2, 'Alex', 'Developer', 'alex@example.com'),
+          (3, 'Sarah', 'Designer', 'sarah@example.com'),
+          (4, 'David', 'Engineer', 'david@example.com');
+      `);
     }
 
-    const pyProcess = spawn("python", [tempFile], { timeout: 8000 });
-    let stdout = "";
-    let stderr = "";
+    if (!userCreatesProducts) {
+      db.run(`
+        CREATE TABLE IF NOT EXISTS products (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          category TEXT,
+          price REAL,
+          stock INTEGER
+        );
+        INSERT OR IGNORE INTO products (id, name, category, price, stock) VALUES
+          (1, 'MacBook Pro', 'Electronics', 1999.99, 15),
+          (2, 'Wireless Mouse', 'Accessories', 49.99, 120),
+          (3, 'Mechanical Keyboard', 'Accessories', 129.50, 45),
+          (4, '4K Monitor', 'Electronics', 449.00, 30);
+      `);
+    }
 
-    pyProcess.stdout.on("data", (data) => {
-      stdout += data.toString();
-    });
+    // Split SQL statements by semicolon while ignoring comments
+    const rawStatements = sqlCode
+      .split(";")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
 
-    pyProcess.stderr.on("data", (data) => {
-      stderr += data.toString();
-    });
+    if (rawStatements.length === 0) {
+      return {
+        stdout: "No executable SQL statements found.",
+        stderr: "",
+        exitCode: 0,
+        sqlResults: [],
+      };
+    }
 
-    try {
-      pyProcess.stdin.write(sqlCode);
-      pyProcess.stdin.end();
-    } catch {}
+    const output: string[] = [];
+    const sqlResults: any[] = [];
 
-    pyProcess.on("close", (code) => {
+    for (let idx = 0; idx < rawStatements.length; idx++) {
+      const stmt = rawStatements[idx];
+      const cleanLines = stmt
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => !l.startsWith("--"));
+      const cleanStmt = cleanLines.join(" ").trim();
+      if (!cleanStmt) continue;
+
+      const firstLine =
+        cleanStmt.length > 60 ? cleanStmt.slice(0, 57) + "..." : cleanStmt;
+
       try {
-        if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
-      } catch {}
+        const isSelectLike = /^\s*(SELECT|PRAGMA|WITH|EXPLAIN)\b/i.test(cleanStmt);
 
-      let sqlResults: any[] | undefined = undefined;
-      let cleanStdout = stdout.trimEnd();
+        if (isSelectLike) {
+          const queryRes = db.exec(cleanStmt);
+          if (queryRes.length > 0) {
+            const { columns, values } = queryRes[0];
+            const strRows = values.map((row: any[]) =>
+              row.map((v) => (v === null || v === undefined ? "NULL" : String(v)))
+            );
 
-      const jsonStart = cleanStdout.indexOf("__SQL_JSON_START__");
-      const jsonEnd = cleanStdout.indexOf("__SQL_JSON_END__");
-      if (jsonStart !== -1 && jsonEnd !== -1) {
-        try {
-          const jsonStr = cleanStdout.substring(
-            jsonStart + "__SQL_JSON_START__".length,
-            jsonEnd
+            sqlResults.push({
+              query: cleanStmt,
+              isSelect: true,
+              headers: columns,
+              rows: strRows,
+              rowCount: values.length,
+            });
+
+            output.push(`-- Query [${idx + 1}]: ${firstLine}`);
+            output.push(formatSqlTable(columns, strRows));
+            output.push(
+              `(${values.length} row${values.length === 1 ? "" : "s"} returned)\n`
+            );
+          } else {
+            sqlResults.push({
+              query: cleanStmt,
+              isSelect: true,
+              headers: [],
+              rows: [],
+              rowCount: 0,
+            });
+            output.push(`-- Query [${idx + 1}]: ${firstLine}`);
+            output.push("(0 rows returned)\n");
+          }
+        } else {
+          db.run(cleanStmt);
+          const rowsAff = db.getRowsModified();
+          sqlResults.push({
+            query: cleanStmt,
+            isSelect: false,
+            rowCount: rowsAff,
+            message: `Executed successfully (${rowsAff} row(s) affected)`,
+          });
+          output.push(
+            `[OK] Query [${idx + 1}]: ${firstLine} (${rowsAff} row(s) affected)\n`
           );
-          sqlResults = JSON.parse(jsonStr);
-          cleanStdout = cleanStdout
-            .substring(jsonEnd + "__SQL_JSON_END__".length)
-            .trim();
-        } catch {}
+        }
+      } catch (err: any) {
+        return {
+          stdout: output.join("\n"),
+          stderr: `SQL Error in statement [${idx + 1}]:\n  ${firstLine}\n--> SQLite Error: ${err.message}`,
+          exitCode: 1,
+          sqlResults,
+        };
       }
+    }
 
-      resolve({
-        stdout: cleanStdout,
-        stderr: stderr.trimEnd(),
-        exitCode: code ?? 0,
-        sqlResults,
-      });
-    });
+    return {
+      stdout: output.join("\n").trimEnd(),
+      stderr: "",
+      exitCode: 0,
+      sqlResults,
+    };
+  } catch (err: any) {
+    console.error("[runSqlQueries fallback to Wandbox]:", err);
+    // Failover to Wandbox SQLite 3.46.1 if WebAssembly engine fails in environment
+    const userCreatesUsers = /\bcreate\s+table\s+(if\s+not\s+exists\s+)?users\b/i.test(sqlCode);
+    const userCreatesProducts = /\bcreate\s+table\s+(if\s+not\s+exists\s+)?products\b/i.test(sqlCode);
 
-    pyProcess.on("error", () => {
-      try {
-        if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
-      } catch {}
-      resolve({
-        stdout: "",
-        stderr: "Python SQLite runtime not available on system.",
-        exitCode: 1,
-      });
-    });
-  });
+    let seed = ".header on\n.mode table\n";
+    if (!userCreatesUsers) {
+      seed += `
+CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT, role TEXT, email TEXT);
+INSERT OR IGNORE INTO users VALUES (1, 'Anil', 'Admin', 'anil@example.com'), (2, 'Alex', 'Developer', 'alex@example.com'), (3, 'Sarah', 'Designer', 'sarah@example.com');
+`;
+    }
+    if (!userCreatesProducts) {
+      seed += `
+CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY, name TEXT, category TEXT, price REAL, stock INTEGER);
+INSERT OR IGNORE INTO products VALUES (1, 'MacBook Pro', 'Electronics', 1999.99, 15), (2, 'Wireless Mouse', 'Accessories', 49.99, 120);
+`;
+    }
+
+    const wandRes = await runWandbox(
+      "sqlite-3.46.1",
+      `${seed}\n${sqlCode}`
+    );
+    return {
+      stdout: wandRes.stdout,
+      stderr: wandRes.stderr,
+      exitCode: wandRes.exitCode,
+    };
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -381,10 +454,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const langConfig = getLanguageById(language);
+    const lang = (language || "").toLowerCase().trim();
+    const langConfig = getLanguageById(lang);
 
     // 1. Python Execution (Local child process with fallback to Wandbox)
-    if (language === "python") {
+    if (lang === "python" || lang === "py") {
       const localRes = await runLocalPython(code, stdin);
       if (localRes.stderr !== "__LOCAL_PY_NOT_FOUND__") {
         return NextResponse.json({
@@ -403,7 +477,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. TypeScript Execution (Transpile via TypeScript engine + Run in VM)
-    if (language === "typescript") {
+    if (lang === "typescript" || lang === "ts") {
       try {
         const transpileRes = ts.transpileModule(code, {
           compilerOptions: {
@@ -429,7 +503,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. JavaScript Execution
-    if (language === "javascript") {
+    if (lang === "javascript" || lang === "js") {
       const vmRes = await runNodeVm(code);
       return NextResponse.json({
         stdout: vmRes.stdout,
@@ -440,7 +514,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 4. C++ Execution (Wandbox GCC 13.2.0)
-    if (language === "cpp") {
+    if (lang === "cpp" || lang === "c++") {
       const wandRes = await runWandbox("gcc-13.2.0", code, stdin);
       return NextResponse.json({
         ...wandRes,
@@ -449,7 +523,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 5. C Execution (Wandbox GCC 13.2.0 C)
-    if (language === "c") {
+    if (lang === "c") {
       const wandRes = await runWandbox("gcc-13.2.0-c", code, stdin);
       return NextResponse.json({
         ...wandRes,
@@ -458,7 +532,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 6. Java Execution (Wandbox OpenJDK 21)
-    if (language === "java") {
+    if (lang === "java") {
       // Wandbox saves source as prog.java, so replace 'public class' with 'class' to avoid class name mismatch
       const sanitizedJava = code.replace(/\bpublic\s+class\b/g, "class");
       const wandRes = await runWandbox("openjdk-jdk-21+35", sanitizedJava, stdin);
@@ -469,7 +543,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 7. Rust Execution (Wandbox Rust 1.78.0)
-    if (language === "rust") {
+    if (lang === "rust" || lang === "rs") {
       const wandRes = await runWandbox("rust-1.78.0", code, stdin);
       return NextResponse.json({
         ...wandRes,
@@ -478,7 +552,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 8. Go Execution (Wandbox Go 1.16.3)
-    if (language === "go") {
+    if (lang === "go" || lang === "golang") {
       const wandRes = await runWandbox("go-1.16.3", code, stdin);
       return NextResponse.json({
         ...wandRes,
@@ -487,7 +561,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 9. JSON Validation & Compilation
-    if (language === "json") {
+    if (lang === "json") {
       try {
         const parsed = JSON.parse(code);
         return NextResponse.json({
@@ -506,9 +580,16 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 10. SQL Real SQLite in-memory execution
-    if (language === "sql") {
-      const sqlRes = await runSqlInSQLite(code);
+    // 10. SQL Real SQLite in-memory execution (sql.js WASM engine + sample schema)
+    if (
+      lang === "sql" ||
+      lang === "sqlite" ||
+      lang === "sqlite3" ||
+      lang === "mysql" ||
+      lang === "postgresql" ||
+      lang === "postgres"
+    ) {
+      const sqlRes = await runSqlQueries(code);
       return NextResponse.json({
         stdout: sqlRes.stdout,
         stderr: sqlRes.stderr,
@@ -519,7 +600,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 11. HTML Preview
-    if (language === "html") {
+    if (lang === "html" || lang === "htm") {
       return NextResponse.json({
         stdout: code,
         stderr: "",
