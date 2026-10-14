@@ -23,6 +23,16 @@ export async function executeCode(
 ): Promise<ExecutionResult> {
   const startTime = performance.now();
 
+  // 0. Blank Code Guard
+  if (!code || !code.trim()) {
+    return {
+      stdout: "",
+      stderr: "No code provided to execute. Please write or paste code in the editor.",
+      exitCode: 0,
+      executionTimeMs: 0,
+    };
+  }
+
   // 1. Special Handling: HTML Preview
   if (languageId === "html") {
     return {
@@ -34,8 +44,8 @@ export async function executeCode(
     };
   }
 
-  // 2. Client-Side JavaScript Execution (Instant & Safe)
-  if (languageId === "javascript" && typeof window !== "undefined") {
+  // 2. Client-Side JavaScript Execution (Instant & Safe when no stdin is needed)
+  if (languageId === "javascript" && !stdin && typeof window !== "undefined") {
     return executeClientJavaScript(code);
   }
 

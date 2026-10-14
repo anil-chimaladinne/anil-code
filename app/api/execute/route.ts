@@ -5,21 +5,32 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import vm from "vm";
+import ts from "typescript";
 
 // Helper to execute Python locally in an isolated child process with timeout
-async function runLocalPython(code: string, stdin?: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+async function runLocalPython(
+  code: string,
+  stdin?: string
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve) => {
     const tempDir = os.tmpdir();
-    const tempFile = path.join(tempDir, `codeconnect_${Date.now()}_${Math.random().toString(36).slice(2)}.py`);
+    const tempFile = path.join(
+      tempDir,
+      `codeconnect_${Date.now()}_${Math.random().toString(36).slice(2)}.py`
+    );
 
     try {
       fs.writeFileSync(tempFile, code, "utf-8");
     } catch (err: any) {
-      return resolve({ stdout: "", stderr: `File system error: ${err.message}`, exitCode: 1 });
+      return resolve({
+        stdout: "",
+        stderr: `File system error: ${err.message}`,
+        exitCode: 1,
+      });
     }
 
     const pyProcess = spawn("python", [tempFile], {
-      timeout: 8000,
+      timeout: 10000,
     });
 
     let stdout = "";
@@ -68,16 +79,23 @@ async function runLocalPython(code: string, stdin?: string): Promise<{ stdout: s
 }
 
 // Helper to execute JavaScript/TypeScript in isolated VM context
-async function runNodeVm(code: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+async function runNodeVm(
+  code: string
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve) => {
     const logs: string[] = [];
     const errors: string[] = [];
 
+    const formatArg = (a: any) =>
+      typeof a === "object" && a !== null
+        ? JSON.stringify(a, null, 2)
+        : String(a);
+
     const sandboxConsole = {
-      log: (...args: any[]) => logs.push(args.map((a) => (typeof a === "object" ? JSON.stringify(a, null, 2) : String(a))).join(" ")),
-      info: (...args: any[]) => logs.push(args.map((a) => (typeof a === "object" ? JSON.stringify(a, null, 2) : String(a))).join(" ")),
-      warn: (...args: any[]) => logs.push(`[WARN] ${args.map((a) => String(a)).join(" ")}`),
-      error: (...args: any[]) => errors.push(args.map((a) => String(a)).join(" ")),
+      log: (...args: any[]) => logs.push(args.map(formatArg).join(" ")),
+      info: (...args: any[]) => logs.push(args.map(formatArg).join(" ")),
+      warn: (...args: any[]) => logs.push(`[WARN] ${args.map(formatArg).join(" ")}`),
+      error: (...args: any[]) => errors.push(args.map(formatArg).join(" ")),
     };
 
     const sandbox = {
@@ -98,15 +116,22 @@ async function runNodeVm(code: string): Promise<{ stdout: string; stderr: string
       Map,
       Set,
       Promise,
+      Buffer,
     };
 
     const context = vm.createContext(sandbox);
 
     try {
       const script = new vm.Script(code);
-      const result = script.runInContext(context, { timeout: 3000 });
+      const result = script.runInContext(context, { timeout: 4000 });
       if (result !== undefined && logs.length === 0) {
-        logs.push(`➜ ${typeof result === "object" ? JSON.stringify(result, null, 2) : String(result)}`);
+        logs.push(
+          `➜ ${
+            typeof result === "object"
+              ? JSON.stringify(result, null, 2)
+              : String(result)
+          }`
+        );
       }
       resolve({
         stdout: logs.join("\n"),
@@ -123,40 +148,12 @@ async function runNodeVm(code: string): Promise<{ stdout: string; stderr: string
   });
 }
 
-// Piston API Engine
-async function runPiston(language: string, version: string, code: string, stdin?: string): Promise<{ stdout: string; stderr: string; exitCode: number } | null> {
-  try {
-    const res = await fetch("https://emkc.org/api/v2/piston/execute", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        language,
-        version: version || "*",
-        files: [{ content: code }],
-        stdin: stdin || "",
-      }),
-      signal: AbortSignal.timeout(9000),
-    });
-
-    if (!res.ok) return null;
-    const data = await res.json();
-    const run = data.run || {};
-    const compile = data.compile || {};
-    const stdout = (compile.stdout ? compile.stdout + "\n" : "") + (run.stdout || "");
-    const stderr = (compile.stderr ? compile.stderr + "\n" : "") + (run.stderr || "");
-    const exitCode = run.code !== undefined ? run.code : (compile.code ?? 0);
-    return {
-      stdout: stdout.trimEnd(),
-      stderr: stderr.trimEnd(),
-      exitCode,
-    };
-  } catch {
-    return null;
-  }
-}
-
 // Wandbox API integration for C++, C, Rust, Go, Java, Python
-async function runWandbox(compiler: string, code: string, stdin?: string): Promise<{ stdout: string; stderr: string; exitCode: number } | null> {
+async function runWandbox(
+  compiler: string,
+  code: string,
+  stdin?: string
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   try {
     const res = await fetch("https://wandbox.org/api/compile.json", {
       method: "POST",
@@ -167,25 +164,47 @@ async function runWandbox(compiler: string, code: string, stdin?: string): Promi
         stdin: stdin || "",
         save: false,
       }),
-      signal: AbortSignal.timeout(9000),
+      signal: AbortSignal.timeout(30000),
     });
 
-    if (!res.ok) return null;
-    const data = await res.json();
-    const stdout = data.program_output || "";
-    const stderr = (data.compiler_error || "") + (data.program_error || "");
+    const text = await res.text();
+    if (!res.ok) {
+      return {
+        stdout: "",
+        stderr: `Compiler service returned HTTP ${res.status}: ${text}`,
+        exitCode: 1,
+      };
+    }
+
+    try {
+      const data = JSON.parse(text);
+      const stdout = data.program_output || "";
+      const stderr = (data.compiler_error || "") + (data.program_error || "");
+      return {
+        stdout: stdout.trimEnd(),
+        stderr: stderr.trimEnd(),
+        exitCode: data.status === "0" ? 0 : 1,
+      };
+    } catch {
+      return {
+        stdout: "",
+        stderr: text,
+        exitCode: 1,
+      };
+    }
+  } catch (err: any) {
     return {
-      stdout: stdout.trimEnd(),
-      stderr: stderr.trimEnd(),
-      exitCode: data.status === "0" ? 0 : 1,
+      stdout: "",
+      stderr: `Execution service error: ${err.message || "Timeout or unreachable"}`,
+      exitCode: 1,
     };
-  } catch {
-    return null;
   }
 }
 
 // Helper to execute SQL queries in a real in-memory SQLite sandbox
-async function runSqlInSQLite(sqlCode: string): Promise<{ stdout: string; stderr: string; exitCode: number; sqlResults?: any[] }> {
+async function runSqlInSQLite(
+  sqlCode: string
+): Promise<{ stdout: string; stderr: string; exitCode: number; sqlResults?: any[] }> {
   const runnerScript = `
 import sqlite3, sys, json
 
@@ -274,15 +293,22 @@ print('\\n'.join(output))
 
   return new Promise((resolve) => {
     const tempDir = os.tmpdir();
-    const tempFile = path.join(tempDir, `sql_runner_${Date.now()}_${Math.random().toString(36).slice(2)}.py`);
+    const tempFile = path.join(
+      tempDir,
+      `sql_runner_${Date.now()}_${Math.random().toString(36).slice(2)}.py`
+    );
 
     try {
       fs.writeFileSync(tempFile, runnerScript, "utf-8");
     } catch (err: any) {
-      return resolve({ stdout: "", stderr: `File system error: ${err.message}`, exitCode: 1 });
+      return resolve({
+        stdout: "",
+        stderr: `File system error: ${err.message}`,
+        exitCode: 1,
+      });
     }
 
-    const pyProcess = spawn("python", [tempFile], { timeout: 6000 });
+    const pyProcess = spawn("python", [tempFile], { timeout: 8000 });
     let stdout = "";
     let stderr = "";
 
@@ -311,9 +337,14 @@ print('\\n'.join(output))
       const jsonEnd = cleanStdout.indexOf("__SQL_JSON_END__");
       if (jsonStart !== -1 && jsonEnd !== -1) {
         try {
-          const jsonStr = cleanStdout.substring(jsonStart + "__SQL_JSON_START__".length, jsonEnd);
+          const jsonStr = cleanStdout.substring(
+            jsonStart + "__SQL_JSON_START__".length,
+            jsonEnd
+          );
           sqlResults = JSON.parse(jsonStr);
-          cleanStdout = cleanStdout.substring(jsonEnd + "__SQL_JSON_END__".length).trim();
+          cleanStdout = cleanStdout
+            .substring(jsonEnd + "__SQL_JSON_END__".length)
+            .trim();
         } catch {}
       }
 
@@ -352,7 +383,7 @@ export async function POST(req: NextRequest) {
 
     const langConfig = getLanguageById(language);
 
-    // 1. Python Execution
+    // 1. Python Execution (Local child process with fallback to Wandbox)
     if (language === "python") {
       const localRes = await runLocalPython(code, stdin);
       if (localRes.stderr !== "__LOCAL_PY_NOT_FOUND__") {
@@ -363,43 +394,43 @@ export async function POST(req: NextRequest) {
           executionTimeMs: Date.now() - startTime,
         });
       }
-      // Fallback to Piston / Wandbox
-      const pistonRes = await runPiston("python", "3.10.0", code, stdin);
-      if (pistonRes) {
-        return NextResponse.json({
-          ...pistonRes,
-          executionTimeMs: Date.now() - startTime,
-        });
-      }
-      const wandRes = await runWandbox("cpython-3.10.0", code, stdin);
-      if (wandRes) {
-        return NextResponse.json({
-          ...wandRes,
-          executionTimeMs: Date.now() - startTime,
-        });
-      }
+      // Fallback to Wandbox
+      const wandRes = await runWandbox("cpython-3.12.7", code, stdin);
+      return NextResponse.json({
+        ...wandRes,
+        executionTimeMs: Date.now() - startTime,
+      });
     }
 
-    // 2. JavaScript / TypeScript Execution
-    if (language === "javascript" || language === "typescript") {
-      // First try isolated Node VM
-      const vmRes = await runNodeVm(code);
-      if (vmRes.exitCode === 0 || !vmRes.stderr.includes("SyntaxError: Unexpected token")) {
+    // 2. TypeScript Execution (Transpile via TypeScript engine + Run in VM)
+    if (language === "typescript") {
+      try {
+        const transpileRes = ts.transpileModule(code, {
+          compilerOptions: {
+            module: ts.ModuleKind.CommonJS,
+            target: ts.ScriptTarget.ES2022,
+          },
+        });
+        const vmRes = await runNodeVm(transpileRes.outputText);
         return NextResponse.json({
           stdout: vmRes.stdout,
           stderr: vmRes.stderr,
           exitCode: vmRes.exitCode,
           executionTimeMs: Date.now() - startTime,
         });
-      }
-      // If TypeScript specific syntax fails in VM, fallback to Piston
-      const pistonRes = await runPiston(language, "*", code, stdin);
-      if (pistonRes) {
+      } catch (err: any) {
         return NextResponse.json({
-          ...pistonRes,
+          stdout: "",
+          stderr: `TypeScript Compilation Error: ${err.message}`,
+          exitCode: 1,
           executionTimeMs: Date.now() - startTime,
         });
       }
+    }
+
+    // 3. JavaScript Execution
+    if (language === "javascript") {
+      const vmRes = await runNodeVm(code);
       return NextResponse.json({
         stdout: vmRes.stdout,
         stderr: vmRes.stderr,
@@ -408,97 +439,54 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 3. C++ Execution
+    // 4. C++ Execution (Wandbox GCC 13.2.0)
     if (language === "cpp") {
       const wandRes = await runWandbox("gcc-13.2.0", code, stdin);
-      if (wandRes) {
-        return NextResponse.json({
-          ...wandRes,
-          executionTimeMs: Date.now() - startTime,
-        });
-      }
-      const pistonRes = await runPiston("cpp", "*", code, stdin);
-      if (pistonRes) {
-        return NextResponse.json({
-          ...pistonRes,
-          executionTimeMs: Date.now() - startTime,
-        });
-      }
+      return NextResponse.json({
+        ...wandRes,
+        executionTimeMs: Date.now() - startTime,
+      });
     }
 
-    // 4. C Execution
+    // 5. C Execution (Wandbox GCC 13.2.0 C)
     if (language === "c") {
       const wandRes = await runWandbox("gcc-13.2.0-c", code, stdin);
-      if (wandRes) {
-        return NextResponse.json({
-          ...wandRes,
-          executionTimeMs: Date.now() - startTime,
-        });
-      }
-      const pistonRes = await runPiston("c", "*", code, stdin);
-      if (pistonRes) {
-        return NextResponse.json({
-          ...pistonRes,
-          executionTimeMs: Date.now() - startTime,
-        });
-      }
+      return NextResponse.json({
+        ...wandRes,
+        executionTimeMs: Date.now() - startTime,
+      });
     }
 
-    // 5. Java Execution
+    // 6. Java Execution (Wandbox OpenJDK 21)
     if (language === "java") {
-      const pistonRes = await runPiston("java", "*", code, stdin);
-      if (pistonRes) {
-        return NextResponse.json({
-          ...pistonRes,
-          executionTimeMs: Date.now() - startTime,
-        });
-      }
-      const wandRes = await runWandbox("openjdk-head", code, stdin);
-      if (wandRes) {
-        return NextResponse.json({
-          ...wandRes,
-          executionTimeMs: Date.now() - startTime,
-        });
-      }
+      // Wandbox saves source as prog.java, so replace 'public class' with 'class' to avoid class name mismatch
+      const sanitizedJava = code.replace(/\bpublic\s+class\b/g, "class");
+      const wandRes = await runWandbox("openjdk-jdk-21+35", sanitizedJava, stdin);
+      return NextResponse.json({
+        ...wandRes,
+        executionTimeMs: Date.now() - startTime,
+      });
     }
 
-    // 6. Rust Execution
+    // 7. Rust Execution (Wandbox Rust 1.78.0)
     if (language === "rust") {
-      const wandRes = await runWandbox("rust-1.70.0", code, stdin);
-      if (wandRes) {
-        return NextResponse.json({
-          ...wandRes,
-          executionTimeMs: Date.now() - startTime,
-        });
-      }
-      const pistonRes = await runPiston("rust", "*", code, stdin);
-      if (pistonRes) {
-        return NextResponse.json({
-          ...pistonRes,
-          executionTimeMs: Date.now() - startTime,
-        });
-      }
+      const wandRes = await runWandbox("rust-1.78.0", code, stdin);
+      return NextResponse.json({
+        ...wandRes,
+        executionTimeMs: Date.now() - startTime,
+      });
     }
 
-    // 7. Go Execution
+    // 8. Go Execution (Wandbox Go 1.16.3)
     if (language === "go") {
-      const wandRes = await runWandbox("go-1.20.4", code, stdin);
-      if (wandRes) {
-        return NextResponse.json({
-          ...wandRes,
-          executionTimeMs: Date.now() - startTime,
-        });
-      }
-      const pistonRes = await runPiston("go", "*", code, stdin);
-      if (pistonRes) {
-        return NextResponse.json({
-          ...pistonRes,
-          executionTimeMs: Date.now() - startTime,
-        });
-      }
+      const wandRes = await runWandbox("go-1.16.3", code, stdin);
+      return NextResponse.json({
+        ...wandRes,
+        executionTimeMs: Date.now() - startTime,
+      });
     }
 
-    // 8. JSON Validation & Compilation
+    // 9. JSON Validation & Compilation
     if (language === "json") {
       try {
         const parsed = JSON.parse(code);
@@ -518,7 +506,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 9. SQL Real SQLite in-memory execution
+    // 10. SQL Real SQLite in-memory execution
     if (language === "sql") {
       const sqlRes = await runSqlInSQLite(code);
       return NextResponse.json({
@@ -530,11 +518,22 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Fallback info for other languages
+    // 11. HTML Preview
+    if (language === "html") {
+      return NextResponse.json({
+        stdout: code,
+        stderr: "",
+        exitCode: 0,
+        isHtmlPreview: true,
+        executionTimeMs: Date.now() - startTime,
+      });
+    }
+
+    // Unsupported language fallback
     return NextResponse.json({
-      stdout: `Execution is active for ${langConfig.name}.\nCode parsed successfully.`,
-      stderr: "",
-      exitCode: 0,
+      stdout: "",
+      stderr: `Execution is not currently supported for ${langConfig.name}. Supported languages: Python, JavaScript, TypeScript, C++, C, Java, Rust, Go, SQL, JSON, HTML.`,
+      exitCode: 1,
       executionTimeMs: Date.now() - startTime,
     });
   } catch (err: any) {

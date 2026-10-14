@@ -464,7 +464,8 @@ export default function NotepadRoomPage() {
     }
 
     try {
-      const res = await executeCode(language, code, customInput);
+      const codeToRun = editorRef.current ? editorRef.current.getValue() : code;
+      const res = await executeCode(language, codeToRun, customInput);
       setExecutionResult(res);
     } catch (err: any) {
       setExecutionResult({
@@ -477,6 +478,11 @@ export default function NotepadRoomPage() {
       setIsRunning(false);
     }
   }, [isRunning, language, code, customInput]);
+
+  const handleRunCodeRef = useRef(handleRunCode);
+  useEffect(() => {
+    handleRunCodeRef.current = handleRunCode;
+  }, [handleRunCode]);
 
   // Copy & Share room link
   const handleCopyLink = () => {
@@ -572,32 +578,32 @@ export default function NotepadRoomPage() {
     // Register keyboard shortcuts to Compile & Run:
     // 1. Ctrl+Enter / Cmd+Enter
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
-      handleRunCode();
+      handleRunCodeRef.current?.();
     });
 
     // 2. F9 (Dev-C++ / Code::Blocks / popular IDE shortcut)
     editor.addCommand(monaco.KeyCode.F9, () => {
-      handleRunCode();
+      handleRunCodeRef.current?.();
     });
 
     // 3. F11 (Compile & Run)
     editor.addCommand(monaco.KeyCode.F11, () => {
-      handleRunCode();
+      handleRunCodeRef.current?.();
     });
 
     // 4. F5 (VS Code / Visual Studio)
     editor.addCommand(monaco.KeyCode.F5, () => {
-      handleRunCode();
+      handleRunCodeRef.current?.();
     });
 
     // 5. Shift+F10 (IntelliJ / PyCharm)
     editor.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.F10, () => {
-      handleRunCode();
+      handleRunCodeRef.current?.();
     });
 
     // 6. Ctrl+F5 / Cmd+F5
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.F5, () => {
-      handleRunCode();
+      handleRunCodeRef.current?.();
     });
 
     // Add keyboard shortcut Alt+N to quickly insert author name tag
